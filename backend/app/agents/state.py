@@ -24,5 +24,5 @@ class InterviewState(TypedDict):
 
     # 종료 및 평가
     is_done: bool                     # 면접 종료 여부
-    scores: dict                      # {"logic": 0, "experience": 0, "trend": 0}
+    scores: dict                      # {"overall": 0, "logic": 0, "experience": 0, "trend": 0}
     feedback: Optional[str]           # 최종 피드백 텍스트
