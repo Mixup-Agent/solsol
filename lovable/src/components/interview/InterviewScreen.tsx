@@ -253,7 +253,16 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
   };
 
   const submitAnswer = async () => {
-    if (isRecording || !recordedAudio || !currentQuestion) return;
+    if (isSubmitting || !currentQuestion) return;
+    if (isRecording) {
+      stopRecording();
+      setSystemMsg("녹음을 종료했습니다. 답변 완료를 다시 눌러 전송하세요.");
+      return;
+    }
+    if (!recordedAudio) {
+      setError("먼저 녹음을 완료해 주세요.");
+      return;
+    }
 
     setIsSubmitting(true);
     setError(null);
@@ -472,7 +481,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
                 </Button>
                 <Button
                   onClick={submitAnswer}
-                  disabled={isRecording || isSubmitting || !recordedAudio || !currentQuestion}
+                  disabled={isSubmitting || !currentQuestion || (!recordedAudio && !isRecording)}
                   className="h-10 rounded-xl px-5 font-semibold"
                 >
                   {isSubmitting ? "처리 중..." : "답변 완료"}
