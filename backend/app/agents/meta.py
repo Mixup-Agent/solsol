@@ -1,8 +1,4 @@
 from app.agents.state import InterviewState
-from langchain_anthropic import ChatAnthropic
-from app.config import settings
-
-llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key)
 
 
 async def meta_agent(state: InterviewState) -> InterviewState:

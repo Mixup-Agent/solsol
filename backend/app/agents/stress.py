@@ -1,8 +1,5 @@
+from app.agents.llm import solar
 from app.agents.state import InterviewState
-from langchain_anthropic import ChatAnthropic
-from app.config import settings
-
-llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key)
 
 
 async def stress_agent(state: InterviewState) -> InterviewState:
@@ -20,7 +17,7 @@ async def stress_agent(state: InterviewState) -> InterviewState:
     지원자의 논리를 흔드는 압박 질문 1개를 생성하세요.
     질문만 출력하세요.
     """
-    response = await llm.ainvoke(prompt)
+    response = await solar.ainvoke(prompt)
     question = response.content
 
     new_messages = state["messages"] + [{"role": "interviewer", "content": question}]

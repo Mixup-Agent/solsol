@@ -1,15 +1,12 @@
 """judge 에이전트 — 면접 종료 시 전체 대화를 평가해 최종 리포트 데이터를 생성한다."""
 import logging
 
-from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel, Field
 
+from app.agents.llm import solar
 from app.agents.state import InterviewState
-from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key)
 
 
 class JudgeResult(BaseModel):
@@ -23,7 +20,7 @@ class JudgeResult(BaseModel):
 
 
 # 구조화 출력 — Claude가 JudgeResult 스키마를 강제로 따르므로 수동 JSON 파싱 불필요
-structured_llm = llm.with_structured_output(JudgeResult)
+structured_llm = solar.with_structured_output(JudgeResult)
 
 SYSTEM_PROMPT = """당신은 면접 평가 전문가입니다. 면접 전체 대화를 읽고 지원자를 평가하세요.
 
