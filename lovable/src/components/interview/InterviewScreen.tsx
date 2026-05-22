@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, RotateCcw, Square, Sparkles, Clock, Volume2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Mic, MicOff, RotateCcw, Square, Sparkles, Clock, Volume2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { interviewers, mockQuestions, mockTranscripts, systemMessages, type Interviewer } from "@/lib/interview-mock";
+import { interviewers, type Interviewer } from "@/lib/interview-mock";
+import { startInterview, submitAnswer, finalizeInterview } from "@/lib/api";
 
 interface Props {
   company: string;
   role: string;
+  sessionId: string;
   onEnd: () => void;
 }
 
-const TOTAL_QUESTIONS = 6;
+const TOTAL_QUESTIONS = 8;
 
 function formatTime(s: number) {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -33,7 +35,6 @@ function InterviewerPanel({
         active ? "border-primary/50 glow-ring" : "border-border shadow-soft"
       }`}
     >
-      {/* Stage background */}
       <div
         className={`absolute inset-0 transition-all duration-500 ${
           active ? "opacity-100" : "opacity-60 grayscale-[40%]"
@@ -43,8 +44,6 @@ function InterviewerPanel({
         }}
       />
       <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent" />
-
-      {/* Avatar */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div className={`relative transition-transform duration-500 ${active ? "scale-105" : "scale-95"}`}>
           <img
@@ -63,8 +62,6 @@ function InterviewerPanel({
           )}
         </div>
       </div>
-
-      {/* Top-left status */}
       <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
         <span
           className={`h-1.5 w-1.5 rounded-full ${
@@ -73,8 +70,6 @@ function InterviewerPanel({
         />
         {active ? (isSpeaking ? "REC" : "LIVE") : "대기"}
       </div>
-
-      {/* Bottom name plate */}
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-3 pt-8">
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold text-white sm:text-sm">{p.name}</p>
@@ -96,59 +91,96 @@ function InterviewerPanel({
   );
 }
 
-export function InterviewScreen({ company, role, onEnd }: Props) {
-  const [qIndex, setQIndex] = useState(0);
+const AGENT_TO_INTERVIEWER: Record<string, string> = {
+  resume: "document",
+  trend: "news",
+  stress: "followup",
+  judge: "fit",
+};
+
+export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
+  const [round, setRound] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const [systemMsg, setSystemMsg] = useState(systemMessages[0]);
-  const transcriptIdx = useRef(0);
+  const [question, setQuestion] = useState("");
+  const [activeAgent, setActiveAgent] = useState("resume");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const question = mockQuestions[qIndex % mockQuestions.length];
-  const currentInterviewer = useMemo(
-    () => interviewers.find((i) => i.id === question.interviewer)!,
-    [question.interviewer]
-  );
+  const activeInterviewer =
+    interviewers.find((i) => i.id === AGENT_TO_INTERVIEWER[activeAgent]) ?? interviewers[0];
 
+  // 타이머
   useEffect(() => {
     const t = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
+  // 질문 도착 시 1.8초 speaking 애니메이션
   useEffect(() => {
+    if (!question) return;
     setIsSpeaking(true);
-    setTranscript("");
-    setSystemMsg(systemMessages[qIndex % systemMessages.length]);
     const t = setTimeout(() => setIsSpeaking(false), 1800);
     return () => clearTimeout(t);
-  }, [qIndex]);
+  }, [question]);
 
+  // 최초 마운트: /start 호출
   useEffect(() => {
-    if (!isRecording) return;
-    const text = mockTranscripts[transcriptIdx.current % mockTranscripts.length];
-    let i = 0;
-    const interval = setInterval(() => {
-      i += 2;
-      setTranscript(text.slice(0, i));
-      if (i >= text.length) clearInterval(interval);
-    }, 40);
-    return () => clearInterval(interval);
-  }, [isRecording]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await startInterview(sessionId);
+        if (cancelled) return;
+        setQuestion(res.question);
+        setRound(res.round);
+        setActiveAgent(res.agent ?? "resume");
+      } catch {
+        if (!cancelled) setError("면접을 시작할 수 없습니다. 서버 연결을 확인해 주세요.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  const handleEnd = async () => {
+    setSubmitting(true);
+    try {
+      await finalizeInterview(sessionId);
+    } catch {
+      // finalize 실패해도 리포트 화면으로 이동
+    }
+    onEnd();
+  };
 
   const toggleRecord = () => {
-    if (isSpeaking) return;
+    if (isSpeaking || loading || submitting) return;
     setIsRecording((r) => !r);
   };
 
-  const submitAnswer = () => {
+  const handleSubmit = async () => {
+    if (!transcript.trim() || submitting) return;
+    setSubmitting(true);
     setIsRecording(false);
-    transcriptIdx.current += 1;
-    if (qIndex + 1 >= TOTAL_QUESTIONS) {
-      onEnd();
-      return;
+    setError(null);
+    try {
+      const res = await submitAnswer(sessionId, transcript);
+      setTranscript("");
+      setRound(res.round);
+      if (res.is_done) {
+        onEnd();
+        return;
+      }
+      setQuestion(res.question ?? "");
+      setActiveAgent(res.agent ?? "resume");
+    } catch {
+      setError("답변 제출에 실패했습니다. 다시 시도해 주세요.");
+    } finally {
+      setSubmitting(false);
     }
-    setQIndex((i) => i + 1);
   };
 
   const replay = () => {
@@ -156,9 +188,19 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
     setTimeout(() => setIsSpeaking(false), 1500);
   };
 
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p className="text-sm">면접관이 준비 중입니다...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
-      {/* Top bar */}
       <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
           <div className="min-w-0">
@@ -171,7 +213,7 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
-              질문 {qIndex + 1} / {TOTAL_QUESTIONS}
+              질문 {round + 1} / {TOTAL_QUESTIONS}
             </span>
             <Badge className="rounded-full bg-success/15 px-2.5 py-1 text-xs text-success hover:bg-success/15 sm:px-3">
               <span className="mr-1 h-1.5 w-1.5 rounded-full bg-success pulse-dot" />
@@ -182,39 +224,35 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
       </header>
 
       <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-6">
-        {/* System status */}
         <div className="mb-4 flex items-center justify-between gap-2 sm:mb-5">
           <div className="inline-flex items-center gap-1.5 rounded-full bg-accent/70 px-3 py-1 text-xs text-accent-foreground">
             <Sparkles className="h-3 w-3" />
-            {systemMsg}
+            {activeAgent === "resume" && "이력서 기반 질문"}
+            {activeAgent === "trend" && "트렌드 질문"}
+            {activeAgent === "stress" && "압박 질문"}
           </div>
           <span className="text-xs text-muted-foreground sm:hidden">
-            {qIndex + 1} / {TOTAL_QUESTIONS}
+            {round + 1} / {TOTAL_QUESTIONS}
           </span>
         </div>
 
-        {/* Interviewer video grid */}
         <div className="grid grid-cols-2 gap-2 sm:gap-3">
           {interviewers.map((p) => (
             <InterviewerPanel
               key={p.id}
               p={p}
-              active={p.id === currentInterviewer.id}
+              active={p.id === activeInterviewer.id}
               isSpeaking={isSpeaking}
             />
           ))}
         </div>
 
-        {/* Current question */}
-        <div
-          key={qIndex}
-          className="mt-5 rounded-3xl border border-border bg-card p-5 shadow-card fade-in sm:p-7"
-        >
+        <div className="mt-5 rounded-3xl border border-border bg-card p-5 shadow-card fade-in sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="rounded-full bg-accent text-accent-foreground">
-              {question.type}
+              {activeAgent}
             </Badge>
-            <span className="text-sm text-muted-foreground">{currentInterviewer.name}</span>
+            <span className="text-sm text-muted-foreground">{activeInterviewer.name}</span>
             {isSpeaking && (
               <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                 <Volume2 className="h-3 w-3" />
@@ -223,17 +261,21 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
             )}
           </div>
           <p className="mt-3 text-[19px] font-semibold leading-[1.4] tracking-tight text-foreground sm:mt-4 sm:text-[22px]">
-            {question.text}
+            {question}
           </p>
         </div>
 
-        {/* Voice recorder card */}
+        {error && (
+          <p className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-3 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+
         <div className="mt-3 overflow-hidden rounded-3xl border border-border bg-card shadow-card sm:mt-4">
-          {/* Top: recorder strip */}
           <div className="flex items-center gap-4 border-b border-border bg-surface-muted/60 px-5 py-5 sm:px-7">
             <button
               onClick={toggleRecord}
-              disabled={isSpeaking}
+              disabled={isSpeaking || loading || submitting}
               aria-label={isRecording ? "녹음 중지" : "녹음 시작"}
               className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 sm:h-16 sm:w-16 ${
                 isRecording
@@ -247,7 +289,9 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
 
             <div className="min-w-0 flex-1">
               <p className="truncate text-[15px] font-semibold text-foreground">
-                {isRecording
+                {submitting
+                  ? "답변 분석 중..."
+                  : isRecording
                   ? "답변을 듣고 있어요"
                   : isSpeaking
                   ? "면접관이 질문 중입니다"
@@ -259,71 +303,72 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
                     <span
                       key={i}
                       className="w-[3px] rounded-full bg-primary wave-bar"
-                      style={{
-                        height: `${8 + ((i * 11) % 18)}px`,
-                        animationDelay: `${i * 55}ms`,
-                      }}
+                      style={{ height: `${8 + ((i * 11) % 18)}px`, animationDelay: `${i * 55}ms` }}
                     />
                   ))
                 ) : isSpeaking ? (
                   <span className="text-xs text-muted-foreground">면접관이 다음 질문을 준비하고 있어요.</span>
                 ) : (
-                  <span className="text-xs text-muted-foreground">마이크 준비 완료 · STT 자동 변환</span>
+                  <span className="text-xs text-muted-foreground">마이크 준비 완료 · 텍스트로 직접 입력도 가능합니다</span>
                 )}
               </div>
             </div>
 
             <div className="hidden shrink-0 items-center gap-2 sm:flex">
-              <Button variant="outline" size="sm" onClick={replay} className="h-10 rounded-xl">
+              <Button variant="outline" size="sm" onClick={replay} disabled={submitting} className="h-10 rounded-xl">
                 <RotateCcw className="mr-1 h-3.5 w-3.5" />
                 다시 듣기
               </Button>
             </div>
           </div>
 
-          {/* Transcript */}
           <div className="px-5 py-5 sm:px-7">
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                실시간 변환 (STT)
+                답변 입력
               </p>
               {transcript && (
                 <span className="text-xs text-muted-foreground">{transcript.length}자</span>
               )}
             </div>
-            <p className="mt-2 min-h-[4.5rem] text-[16px] leading-[1.4] text-foreground">
-              {transcript || (
-                <span className="text-muted-foreground">
-                  마이크를 누르면 답변이 텍스트로 기록됩니다.
-                </span>
-              )}
-              {isRecording && (
-                <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-primary align-middle" />
-              )}
-            </p>
+            <textarea
+              className="mt-2 min-h-[4.5rem] w-full resize-none bg-transparent text-[16px] leading-[1.4] text-foreground outline-none placeholder:text-muted-foreground"
+              placeholder="마이크를 누르거나 여기에 직접 답변을 입력하세요."
+              value={transcript}
+              onChange={(e) => setTranscript(e.target.value)}
+              disabled={submitting}
+              rows={3}
+            />
 
-            {/* Action row */}
             <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onEnd}
+                onClick={handleEnd}
+                disabled={submitting}
                 className="h-10 rounded-xl px-3 text-muted-foreground hover:text-destructive"
               >
                 <Square className="mr-1 h-3.5 w-3.5" />
                 면접 종료
               </Button>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={replay} className="h-10 rounded-xl sm:hidden">
+                <Button variant="outline" size="sm" onClick={replay} disabled={submitting} className="h-10 rounded-xl sm:hidden">
                   <RotateCcw className="mr-1 h-3.5 w-3.5" />
                   다시 듣기
                 </Button>
                 <Button
-                  onClick={submitAnswer}
-                  disabled={!transcript && !isRecording}
+                  onClick={handleSubmit}
+                  disabled={!transcript.trim() || submitting}
                   className="h-10 rounded-xl px-5 font-semibold"
                 >
-                  답변 완료
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      처리 중...
+                    </>
+                  ) : (
+                    "답변 완료"
+                  )}
                 </Button>
               </div>
             </div>

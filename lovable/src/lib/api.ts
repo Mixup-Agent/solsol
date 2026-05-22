@@ -48,12 +48,20 @@ export async function submitAnswer(sessionId: string, answer: string) {
   }>;
 }
 
+export async function finalizeInterview(sessionId: string) {
+  const res = await fetch(`${BASE}/api/v1/session/${sessionId}/finalize`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<{ status: string }>;
+}
+
 export async function getReport(sessionId: string) {
   const res = await fetch(`${BASE}/api/v1/session/${sessionId}/report`);
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<{
     session_id: string;
-    scores: { logic: number; experience: number; trend: number };
+    scores: { overall?: number; logic: number; experience: number; trend: number };
     feedback: string;
     messages: { role: string; content: string }[];
     agent_history: string[];
