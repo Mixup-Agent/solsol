@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     session_ttl: int = 7200
     anthropic_api_key: str = ""
     upstage_api_key: str = ""
+    openai_api_key: str = ""
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
 

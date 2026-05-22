@@ -8,6 +8,8 @@ redis[asyncio]
 pydantic[email]
 pydantic-settings
 python-dotenv
+openai>=1.40.0
+requests
 langchain
 langgraph
 langchain-anthropic
