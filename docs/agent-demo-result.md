@@ -3,7 +3,7 @@
 - **실행일**: 2026-05-23
 - **대상 파이프라인**: 면접 LangGraph (`resume → trend → stress → judge`)
 - **실행 방법**: `cd backend && uv run python scripts/demo_interview.py`
-- **LLM**: Upstage Solar (`solar-pro`)
+- **LLM**: Upstage Solar (`solar-pro3`)
 - **비고**: Redis·HTTP 없이 그래프를 직접 구동했으며, 지원자 답변은 샘플로 시뮬레이션함. 따라서 아래 점수는 시스템 동작 검증용이며 실제 지원자 평가가 아님.
 
 ## 입력 (샘플)

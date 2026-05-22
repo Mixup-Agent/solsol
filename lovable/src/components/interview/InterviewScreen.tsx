@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Mic, MicOff, RotateCcw, Square, Sparkles, Clock, Volume2, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { API_BASE, createAudioTurn, createFirstTurn } from "@/lib/api";
+import { API_BASE, createAudioTurn, createFirstTurn, type QuestionSource } from "@/lib/api";
 import { interviewers, systemMessages, type Interviewer, type InterviewerType } from "@/lib/interview-mock";
 
 interface Props {
@@ -145,6 +145,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isBooting, setIsBooting] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState("");
+  const [currentQuestionSources, setCurrentQuestionSources] = useState<QuestionSource[]>([]);
   const [currentAgentType, setCurrentAgentType] = useState("resume");
   const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
   const [lastTtsAudioUrl, setLastTtsAudioUrl] = useState<string | null>(null);
@@ -195,6 +196,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
         const first = await createFirstTurn(sessionId);
         if (cancelled) return;
         setCurrentQuestion(first.question);
+        setCurrentQuestionSources(first.question_sources ?? []);
         setCurrentAgentType(first.agent_type);
         setRoundNo(first.round_no);
         if (first.tts_audio_url) {
@@ -379,6 +381,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
       setTranscript(result.transcript);
       setLiveTranscript("");
       setCurrentQuestion(result.next_question);
+      setCurrentQuestionSources(result.next_question_sources ?? []);
       setCurrentAgentType(result.next_agent_type ?? currentAgentType);
       setRoundNo((prev) => prev + 1);
       setRecordedAudio(null);
@@ -470,16 +473,35 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
 
         {/* Current question */}
         <div className="mt-5 rounded-3xl border border-border bg-card p-5 shadow-card fade-in sm:p-7">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="rounded-full bg-accent text-accent-foreground">
-              {AGENT_TYPE_LABEL[currentAgentType] ?? "면접 질문"}
-            </Badge>
-            <span className="text-sm text-muted-foreground">{currentInterviewer.name}</span>
-            {isSpeaking && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                <Volume2 className="h-3 w-3" />
-                질문 중
-              </span>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="rounded-full bg-accent text-accent-foreground">
+                {AGENT_TYPE_LABEL[currentAgentType] ?? "면접 질문"}
+              </Badge>
+              <span className="text-sm text-muted-foreground">{currentInterviewer.name}</span>
+              {isSpeaking && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  <Volume2 className="h-3 w-3" />
+                  질문 중
+                </span>
+              )}
+            </div>
+            {currentAgentType === "trend" && currentQuestionSources.length > 0 && (
+              <div className="max-w-[52%] text-right text-[11px] leading-tight text-muted-foreground">
+                <p className="mb-1">출처</p>
+                {currentQuestionSources.slice(0, 2).map((item) => (
+                  <a
+                    key={`${item.url}-${item.title}`}
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block truncate hover:text-foreground hover:underline"
+                    title={`${item.source}: ${item.title}`}
+                  >
+                    {item.source}: {item.title}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
           <p className="mt-3 text-[19px] font-semibold leading-[1.4] tracking-tight text-foreground sm:mt-4 sm:text-[22px]">

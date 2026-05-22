@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.agents.helpers import format_transcript
-from app.agents.llm import solar
+from app.agents.llm import solar_reasoner as solar, with_session_cache
 from app.agents.state import InterviewState
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,6 @@ class RouteDecision(BaseModel):
     )
     reason: str = Field(description="이 면접관을 고른 한 줄 이유")
 
-
-_router_llm = solar.with_structured_output(RouteDecision)
 
 SYSTEM_PROMPT = """당신은 면접 진행을 총괄하는 오케스트레이터입니다.
 다음에 어떤 면접관에게 질문을 넘길지 결정하세요.
@@ -116,7 +114,9 @@ async def meta_agent(state: InterviewState) -> InterviewState:
             f"[면접 대화]\n{format_transcript(state['messages'])}\n\n"
             f"다음 면접관을 선택하세요."
         )
-        decision: RouteDecision = await _router_llm.ainvoke(
+        llm = with_session_cache(solar, state["session_id"])
+        router_llm = llm.with_structured_output(RouteDecision)
+        decision: RouteDecision = await router_llm.ainvoke(
             [("system", SYSTEM_PROMPT), ("human", user_prompt)]
         )
         next_agent, reason = decision.next_agent, decision.reason

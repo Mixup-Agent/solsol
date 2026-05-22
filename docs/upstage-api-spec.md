@@ -15,7 +15,7 @@
 
 ### 기본 정보
 
-- **Model ID**: `solar-pro`
+- **Model ID**: `solar-pro3`
 - **Context Window**: 128,000 tokens
 - **Parameters**: 102B total, 12B active (MoE)
 - **언어**: 한국어 최적화, 영어·일본어 지원
@@ -33,7 +33,7 @@ headers = {
 }
 
 payload = {
-    "model": "solar-pro",  # 또는 "solar-mini" (경량 버전)
+    "model": "solar-pro3",  # 또는 "solar-mini" (경량 버전)
     "messages": [
         {"role": "system", "content": "당신은 면접관입니다."},
         {"role": "user", "content": "질문을 생성해주세요."}
@@ -52,7 +52,7 @@ result = response.json()
     "id": "chatcmpl-xxx",
     "object": "chat.completion",
     "created": 1234567890,
-    "model": "solar-pro",
+    "model": "solar-pro3",
     "choices": [
         {
             "index": 0,
@@ -84,7 +84,7 @@ def call_solar(self, system_prompt: str, user_message: str) -> str:
     }
 
     payload = {
-        "model": "solar-pro",
+        "model": "solar-pro3",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}

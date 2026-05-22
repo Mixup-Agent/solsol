@@ -34,6 +34,7 @@ def _build_state_from_context(session_id: str, context: dict) -> InterviewState:
         "answer_quality_history": [],
         "current_agent": None,
         "current_question": None,
+        "current_question_sources": [],
         "last_answer": None,
         "last_answer_quality": None,
         "is_done": False,
@@ -78,6 +79,7 @@ async def start_interview(session_id: str):
             "answer_quality_history": [],
             "current_agent": None,
             "current_question": None,
+            "current_question_sources": [],
             "last_answer": None,
             "last_answer_quality": None,
             "is_done": False,
@@ -120,6 +122,7 @@ async def submit_answer(session_id: str, body: AnswerRequest):
         question_text=latest_question,
         answer_text=body.answer,
         recent_answers=recent_answers,
+        session_id=state["session_id"],
     )
     state["last_answer_quality"] = quality
     state.setdefault("answer_quality_history", []).append(
@@ -211,6 +214,7 @@ async def finalize_interview(session_id: str):
                     ],
                     "current_agent": None,
                     "current_question": None,
+                    "current_question_sources": [],
                     "last_answer": turns[-1]["transcript"] if turns else None,
                     "last_answer_quality": (
                         (turns[-1].get("answer_quality") if turns else None) or None

@@ -84,6 +84,7 @@ def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
         "answer_quality_history": quality_history,
         "current_agent": None,
         "current_question": None,
+        "current_question_sources": [],
         "last_answer": turns[-1]["transcript"] if turns else None,
         "last_answer_quality": quality_history[-1] if quality_history else None,
         "is_done": False,
@@ -92,10 +93,10 @@ def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
     }
 
 
-async def _generate_next_question(session_id: int) -> tuple[str, str]:
+async def _generate_next_question(session_id: int) -> tuple[str, str, list[dict]]:
     """지금까지의 면접 기록으로 meta→질문 에이전트를 돌려 다음 질문을 만든다.
 
-    반환: (다음 질문 텍스트, 다음 면접관 유형)
+    반환: (다음 질문 텍스트, 다음 면접관 유형, 질문 출처)
     """
     turns = get_turns(session_id)
     state = _build_state(session_id, turns)
@@ -105,7 +106,7 @@ async def _generate_next_question(session_id: int) -> tuple[str, str]:
     agent_fn = _QUESTION_AGENTS.get(agent_type, resume_agent)
 
     state = await agent_fn(state)
-    return state["current_question"], agent_type
+    return state["current_question"], agent_type, state.get("current_question_sources", [])
 
 
 @router.post("/{session_id}/turns/first")
@@ -115,10 +116,10 @@ async def create_first_turn(session_id: int):
     턴 기록이 0건이면 meta가 round 0으로 보고 resume 에이전트를 선택한다.
     """
     try:
-        question, agent_type = await _generate_next_question(session_id)
+        question, agent_type, question_sources = await _generate_next_question(session_id)
     except Exception:
         logger.exception("첫 질문 생성 실패 — 폴백 질문 사용")
-        question, agent_type = "간단히 자기소개를 부탁드립니다.", "resume"
+        question, agent_type, question_sources = "간단히 자기소개를 부탁드립니다.", "resume", []
 
     turn_uid = uuid.uuid4().hex[:8]
     tts_filename = f"s{session_id}_first_{turn_uid}.mp3"
@@ -131,6 +132,7 @@ async def create_first_turn(session_id: int):
         "round_no": 0,
         "question": question,
         "agent_type": agent_type,
+        "question_sources": question_sources,
         "tts_audio_url": tts_audio_url,
         "tts_provider": tts.get("provider"),
         "tts_status": tts["status"],
@@ -180,6 +182,7 @@ async def create_audio_turn(
         question_text=question_text,
         answer_text=transcript,
         recent_answers=[t.get("transcript") or "" for t in prev_turns if t.get("transcript")],
+        session_id=str(session_id),
     )
 
     # ③ 이번 턴을 DB에 기록 (음성 답변 영속화)
@@ -198,11 +201,14 @@ async def create_audio_turn(
 
     # ④ 실제 에이전트로 다음 질문 생성
     try:
-        next_question, next_agent = await _generate_next_question(session_id)
+        next_question, next_agent, next_sources = await _generate_next_question(session_id)
     except Exception:
         logger.exception("다음 질문 생성 실패 — 폴백 질문 사용")
-        next_question = "방금 답변을 조금 더 구체적으로 설명해 주시겠어요?"
-        next_agent = agent_type
+        next_question, next_agent, next_sources = (
+            "방금 답변을 조금 더 구체적으로 설명해 주시겠어요?",
+            agent_type,
+            [],
+        )
 
     # ⑤ TTS
     tts_filename = f"s{session_id}_r{round_no}_{turn_uid}.mp3"
@@ -220,6 +226,7 @@ async def create_audio_turn(
         "stt_provider": stt["provider"],
         "next_question": next_question,
         "next_agent_type": next_agent,
+        "next_question_sources": next_sources,
         # 턴별 평가는 없음 — 최종 평가는 면접 종료 시 judge가 수행
         "evaluation": None,
         "tts_audio_url": tts_audio_url,

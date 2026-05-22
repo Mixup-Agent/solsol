@@ -4,7 +4,7 @@ import re
 from pydantic import BaseModel, Field
 
 from app.agents.helpers import clean_question, format_transcript
-from app.agents.llm import solar
+from app.agents.llm import solar, with_session_cache
 from app.agents.state import InterviewState
 
 SYSTEM_PROMPT = """당신은 압박 면접관입니다.
@@ -24,7 +24,6 @@ class StressQuestion(BaseModel):
     follow_up_question: str = Field(description="약점을 검증하는 꼬리 질문 1문장")
 
 
-_structured_llm = solar.with_structured_output(StressQuestion)
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9가-힣]{2,}")
 
 
@@ -75,7 +74,9 @@ async def stress_agent(state: InterviewState) -> InterviewState:
         f"직전 답변의 약점을 파고드는 압박 질문 1개를 만들어 주세요."
     )
     try:
-        result: StressQuestion = await _structured_llm.ainvoke(
+        llm = with_session_cache(solar, state["session_id"])
+        structured_llm = llm.with_structured_output(StressQuestion)
+        result: StressQuestion = await structured_llm.ainvoke(
             [("system", SYSTEM_PROMPT), ("human", user_prompt)]
         )
         question = clean_question(result.follow_up_question)
@@ -88,6 +89,7 @@ async def stress_agent(state: InterviewState) -> InterviewState:
     return {
         **state,
         "current_question": question,
+        "current_question_sources": [],
         "messages": state["messages"] + [{"role": "interviewer", "content": question}],
         "agent_history": state["agent_history"] + ["stress"],
     }

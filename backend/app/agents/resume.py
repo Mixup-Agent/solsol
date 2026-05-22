@@ -1,6 +1,6 @@
 """resume 에이전트 — 이력서·자소서 기반 사실 검증 질문을 생성한다."""
 from app.agents.helpers import clean_question, format_transcript
-from app.agents.llm import solar
+from app.agents.llm import solar, with_session_cache
 from app.agents.state import InterviewState
 
 SYSTEM_PROMPT = """당신은 이력서·자기소개서를 검증하는 면접관입니다.
@@ -20,12 +20,14 @@ async def resume_agent(state: InterviewState) -> InterviewState:
         f"[지금까지의 면접 대화]\n{format_transcript(state['messages'])}\n\n"
         f"위 지원자에게 던질 이력서 기반 검증 질문 1개를 만들어 주세요."
     )
-    response = await solar.ainvoke([("system", SYSTEM_PROMPT), ("human", user_prompt)])
+    llm = with_session_cache(solar, state["session_id"])
+    response = await llm.ainvoke([("system", SYSTEM_PROMPT), ("human", user_prompt)])
     question = clean_question(response.content)
 
     return {
         **state,
         "current_question": question,
+        "current_question_sources": [],
         "messages": state["messages"] + [{"role": "interviewer", "content": question}],
         "agent_history": state["agent_history"] + ["resume"],
     }
