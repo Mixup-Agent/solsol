@@ -1,4 +1,4 @@
-"""Audio-based interview turn endpoint."""
+"""음성 기반 면접 턴 엔드포인트 — 실제 면접 에이전트(LangGraph 노드)와 연결."""
 import logging
 import shutil
 import uuid
@@ -6,9 +6,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.agents.meta import meta_agent
+from app.agents.resume import resume_agent
+from app.agents.state import InterviewState
+from app.agents.stress import stress_agent
+from app.agents.trend import trend_agent
+from app.services.interview_db import get_agent_context, get_turns, insert_turn
 from app.services.stt import transcribe_audio
 from app.services.tts import synthesize_speech
-
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/interview-sessions", tags=["turns"])
@@ -17,6 +22,69 @@ AUDIO_UPLOAD_DIR = Path(__file__).resolve().parents[1] / "uploads" / "audio"
 AUDIO_TTS_DIR = Path(__file__).resolve().parents[1] / "data" / "tts"
 AUDIO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_TTS_DIR.mkdir(parents=True, exist_ok=True)
+
+_QUESTION_AGENTS = {
+    "resume": resume_agent,
+    "trend": trend_agent,
+    "stress": stress_agent,
+}
+# 음성 흐름은 프론트가 종료를 제어하므로 meta가 judge로 빠지지 않게 크게 잡는다
+_VOICE_MAX_ROUNDS = 99
+
+
+def _doc_text(docs: dict, key: str) -> str:
+    """agent_context의 candidate_documents에서 특정 문서 본문을 꺼낸다."""
+    return (docs.get(key) or {}).get("text", "")
+
+
+def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
+    """SQLite의 세션 컨텍스트 + 턴 기록으로 InterviewState를 구성한다."""
+    record = get_agent_context(session_id)
+    ctx = record[1] if record else {}
+    docs = ctx.get("candidate_documents", {})
+
+    messages: list[dict] = []
+    for t in turns:
+        if t.get("question_text"):
+            messages.append({"role": "interviewer", "content": t["question_text"]})
+        if t.get("transcript"):
+            messages.append({"role": "candidate", "content": t["transcript"]})
+
+    return {
+        "session_id": str(session_id),
+        "cover_letter": _doc_text(docs, "self_intro"),
+        "resume_text": _doc_text(docs, "resume"),
+        "portfolio_text": _doc_text(docs, "portfolio"),
+        "company": ctx.get("company", ""),
+        "role": ctx.get("role", ""),
+        "job_posting_text": (ctx.get("job_posting") or {}).get("text"),
+        "round": len(turns),
+        "max_rounds": _VOICE_MAX_ROUNDS,
+        "messages": messages,
+        "agent_history": [t["agent_type"] for t in turns if t.get("agent_type")],
+        "current_agent": None,
+        "current_question": None,
+        "last_answer": turns[-1]["transcript"] if turns else None,
+        "is_done": False,
+        "scores": {},
+        "feedback": None,
+    }
+
+
+async def _generate_next_question(session_id: int) -> tuple[str, str]:
+    """지금까지의 면접 기록으로 meta→질문 에이전트를 돌려 다음 질문을 만든다.
+
+    반환: (다음 질문 텍스트, 다음 면접관 유형)
+    """
+    turns = get_turns(session_id)
+    state = _build_state(session_id, turns)
+
+    state = await meta_agent(state)
+    agent_type = state.get("current_agent") or "resume"
+    agent_fn = _QUESTION_AGENTS.get(agent_type, resume_agent)
+
+    state = await agent_fn(state)
+    return state["current_question"], agent_type
 
 
 @router.post("/{session_id}/turns/audio")
@@ -27,15 +95,15 @@ async def create_audio_turn(
     question_text: str = Form(...),
     agent_type: str = Form("resume"),
 ):
-    """
-    1) 음성 저장 → 2) STT → 3) Agent (지금은 mock) → 4) TTS → 5) 응답
-    실패해도 partial 응답을 200으로 돌려서 프론트가 죽지 않게 한다.
+    """음성 저장 → STT → 턴 DB 기록 → 실제 에이전트가 다음 질문 생성 → TTS.
+
+    실패해도 partial 응답을 200으로 돌려 프론트가 죽지 않게 한다.
     """
     turn_uid = uuid.uuid4().hex[:8]
     ext = Path(audio_file.filename or "").suffix or ".webm"
     answer_path = AUDIO_UPLOAD_DIR / f"s{session_id}_r{round_no}_{turn_uid}{ext}"
 
-    # ① 파일 저장
+    # ① 음성 파일 저장
     try:
         with answer_path.open("wb") as f:
             shutil.copyfileobj(audio_file.file, f)
@@ -52,21 +120,40 @@ async def create_audio_turn(
             "stt_status": "failed",
             "stt_error": stt.get("error"),
             "next_question": "음성 인식에 실패했습니다. 한 번 더 말씀해 주시겠어요?",
+            "next_agent_type": agent_type,
             "evaluation": None,
             "tts_audio_url": None,
         }
     transcript = stt["transcript"]
 
-    # ③ Agent (mock — 추후 교체)
-    agent_response = _mock_agent_response(transcript, question_text, agent_type)
-    next_question = agent_response["next_question"]
-    evaluation = agent_response["evaluation"]
+    # ③ 이번 턴을 DB에 기록 (음성 답변 영속화)
+    try:
+        insert_turn(
+            session_id=session_id,
+            round_no=round_no,
+            agent_type=agent_type,
+            question_text=question_text,
+            audio_path=str(answer_path),
+            transcript=transcript,
+        )
+    except Exception:
+        logger.exception("interview_turn 저장 실패 — 계속 진행")
 
-    # ④ TTS
+    # ④ 실제 에이전트로 다음 질문 생성
+    try:
+        next_question, next_agent = await _generate_next_question(session_id)
+    except Exception:
+        logger.exception("다음 질문 생성 실패 — 폴백 질문 사용")
+        next_question = "방금 답변을 조금 더 구체적으로 설명해 주시겠어요?"
+        next_agent = agent_type
+
+    # ⑤ TTS
     tts_filename = f"s{session_id}_r{round_no}_{turn_uid}.mp3"
     tts_path = AUDIO_TTS_DIR / tts_filename
     tts = synthesize_speech(next_question, tts_path)
-    tts_audio_url = f"/api/audio/tts/{tts_filename}" if tts["status"] == "success" else None
+    tts_audio_url = (
+        f"/api/audio/tts/{tts_filename}" if tts["status"] == "success" else None
+    )
 
     return {
         "turn_id": turn_uid,
@@ -74,33 +161,10 @@ async def create_audio_turn(
         "stt_status": "success",
         "stt_provider": stt["provider"],
         "next_question": next_question,
-        "evaluation": evaluation,
+        "next_agent_type": next_agent,
+        # 턴별 평가는 없음 — 최종 평가는 면접 종료 시 judge가 수행
+        "evaluation": None,
         "tts_audio_url": tts_audio_url,
         "tts_provider": tts.get("provider"),
         "tts_status": tts["status"],
     }
-
-
-def _mock_agent_response(transcript: str, question_text: str, agent_type: str) -> dict:
-    """단순 규칙 기반 mock. Solar Pro3 연결 전 데모용."""
-    weakness = None
-    if not any(ch.isdigit() for ch in transcript):
-        weakness = "성과 수치 부족"
-        nxt = "그 성과를 어떤 지표로 측정하셨나요? 구체적인 수치로 말씀해 주세요."
-    elif len(transcript) < 60:
-        weakness = "답변 구체성 부족"
-        nxt = "조금 더 구체적으로 설명해 주시겠어요? 그 결정을 내린 근거가 궁금합니다."
-    else:
-        nxt = "그 선택이 최선이었다는 근거가 있나요? 다른 대안과 비교한 적이 있나요?"
-
-    return {
-        "next_question": nxt,
-        "evaluation": {
-            "specificity": 2 if weakness else 4,
-            "logic": 3,
-            "weakness": weakness,
-            "agent_type": agent_type,
-            "question_text": question_text,
-        },
-    }
-
