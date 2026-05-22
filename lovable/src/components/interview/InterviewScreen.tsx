@@ -185,6 +185,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
 
   useEffect(() => {
     if (!sessionId) return;
+    let cancelled = false;
 
     const boot = async () => {
       setIsBooting(true);
@@ -192,6 +193,7 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
       setSystemMsg("면접 첫 질문을 준비 중입니다");
       try {
         const first = await createFirstTurn(sessionId);
+        if (cancelled) return;
         setCurrentQuestion(first.question);
         setCurrentAgentType(first.agent_type);
         setRoundNo(first.round_no);
@@ -199,16 +201,21 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
           await playTts(first.tts_audio_url);
         }
       } catch (e) {
-        setError("첫 질문을 불러오지 못했습니다.");
+        if (!cancelled) setError("첫 질문을 불러오지 못했습니다.");
       } finally {
-        setIsBooting(false);
+        if (!cancelled) setIsBooting(false);
       }
     };
 
     void boot();
     return () => {
+      cancelled = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      audioRef.current?.pause();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+        audioRef.current = null;
+      }
       speechRef.current?.stop();
     };
   }, [sessionId]);
@@ -308,6 +315,14 @@ export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
   };
 
   const playTts = async (ttsAudioUrl: string) => {
+    // 이전 오디오가 재생 중이면 즉시 중단
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    setIsSpeaking(false);
+
     const src = `${API_BASE}${ttsAudioUrl}`;
     setLastTtsAudioUrl(src);
     setIsSpeaking(true);
