@@ -50,28 +50,51 @@ def _record(state: InterviewState, agent: str, reason: str) -> list[dict]:
 
 
 def _quality_gate(state: InterviewState) -> tuple[bool, str]:
-    """직전 답변 품질이 낮으면 stress로 강제 라우팅한다."""
+    """품질 이슈가 심각할 때만 stress로 강제 라우팅한다."""
     quality = state.get("last_answer_quality") or {}
+    history = state.get("answer_quality_history") or []
     flags = set(quality.get("flags") or [])
     score = int(quality.get("score") or 0)
     action_hint = quality.get("action_hint")
 
-    trigger_flags = {
-        "too_short",
-        "evasive",
-        "repetition",
-        "irrelevant",
-        "off_topic",
-        "unsupported_claim",
-        "inconsistent",
-    }
-    if action_hint == "stress" or score <= 45 or flags & trigger_flags:
+    # "모르겠다" 1회만으로 바로 stress로 보내지 않도록 강제 조건을 완화한다.
+    severe_flags = {"unsupported_claim", "inconsistent"}
+    recent_stress_hints = sum(
+        1
+        for item in history[-2:]
+        if (item or {}).get("action_hint") == "stress" and int((item or {}).get("score") or 0) <= 45
+    )
+
+    should_force = (
+        score <= 25
+        or (score <= 35 and bool(flags & severe_flags))
+        or (action_hint == "stress" and recent_stress_hints >= 2)
+    )
+    if should_force:
         reason = (
             "직전 답변 품질 저하 감지"
             f"(score={score}, hint={action_hint or 'none'}, flags={','.join(sorted(flags)) or 'none'})"
         )
         return True, reason
     return False, ""
+
+
+def _balance_agent_choice(history: list[str], candidate: str) -> tuple[str, str | None]:
+    """면접관 선택을 균형화해 특정 에이전트 쏠림을 줄인다."""
+    counts = {agent: history.count(agent) for agent in _AGENTS}
+    least_used = _least_used(history, _AGENTS)
+    candidate_count = counts.get(candidate, 0)
+    least_count = counts.get(least_used, 0)
+
+    # 한 에이전트가 과도하게 앞서가면 least-used로 보정
+    if candidate_count - least_count >= 2:
+        return least_used, f"에이전트 균형 보정 — {least_used} 우선"
+
+    # 같은 에이전트가 연속 반복될 때도 균형 후보를 우선
+    if history and history[-1] == candidate and candidate_count > least_count:
+        return least_used, f"연속 반복 완화 — {least_used}로 전환"
+
+    return candidate, None
 
 
 async def meta_agent(state: InterviewState) -> InterviewState:
@@ -129,6 +152,11 @@ async def meta_agent(state: InterviewState) -> InterviewState:
     if next_agent == "trend" and history.count("trend") >= _TREND_LIMIT:
         next_agent = _least_used(history, ["resume", "stress"])
         reason = f"trend {_TREND_LIMIT}회 도달 — {next_agent}(으)로 대체"
+
+    balanced_agent, balance_reason = _balance_agent_choice(history, next_agent)
+    if balanced_agent != next_agent:
+        next_agent = balanced_agent
+        reason = balance_reason or reason
 
     return {
         **state,
