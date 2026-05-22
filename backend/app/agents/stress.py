@@ -1,33 +1,31 @@
+"""stress 에이전트 — 직전 답변의 약점을 파고드는 압박 질문을 생성한다."""
+from app.agents.helpers import clean_question, format_transcript
+from app.agents.llm import solar
 from app.agents.state import InterviewState
-from langchain_upstage import ChatUpstage
-from app.config import settings
 
-llm = ChatUpstage(model="solar-pro", api_key=settings.upstage_api_key)
+SYSTEM_PROMPT = """당신은 압박 면접관입니다.
+지원자의 직전 답변에서 약점·모순·모호함을 찾아 논리를 검증하는 꼬리 질문 1개를 만듭니다.
+
+규칙:
+- 직전 답변을 구체적으로 겨냥한다 (일반론 금지)
+- 적당히 의심하는 톤을 유지하되 무례하지 않게 한다
+- 한국어로, 질문 문장 하나만 출력한다 (따옴표·번호·머리말 없이)"""
 
 
 async def stress_agent(state: InterviewState) -> InterviewState:
-    """
-    역할: 압박 질문, 논리 반박, 꼬리 질문
-    스타일: 의심형, 비협조적
-    TODO (에이전트 팀): 압박 강도 조절 로직, 이전 답변 기반 꼬리 질문
-    """
-    last_answer = state.get("last_answer", "")
-    prompt = f"""
-    당신은 압박 면접관입니다.
-    지원자의 마지막 답변: {last_answer}
-    대화 히스토리: {state['messages']}
-
-    지원자의 논리를 흔드는 압박 질문 1개를 생성하세요.
-    질문만 출력하세요.
-    """
-    response = await llm.ainvoke(prompt)
-    question = response.content
-
-    new_messages = state["messages"] + [{"role": "interviewer", "content": question}]
+    """압박·논리 반박·꼬리 질문 생성. TODO (에이전트 팀): 압박 강도 동적 조절."""
+    last_answer = state.get("last_answer") or "(직전 답변 없음)"
+    user_prompt = (
+        f"[지원자의 직전 답변]\n{last_answer}\n\n"
+        f"[지금까지의 면접 대화]\n{format_transcript(state['messages'])}\n\n"
+        f"직전 답변의 약점을 파고드는 압박 질문 1개를 만들어 주세요."
+    )
+    response = await solar.ainvoke([("system", SYSTEM_PROMPT), ("human", user_prompt)])
+    question = clean_question(response.content)
 
     return {
         **state,
         "current_question": question,
-        "messages": new_messages,
+        "messages": state["messages"] + [{"role": "interviewer", "content": question}],
         "agent_history": state["agent_history"] + ["stress"],
     }

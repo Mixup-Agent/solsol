@@ -1,5 +1,10 @@
 # AI 모의 면접 에이전트 시스템 - 프로젝트 개요
 
+> ⚠️ **이 문서는 초기 설계 문서(설계 비전)입니다.**
+> 실제 구현 구조·실행 방법은 [interview-agent.md](./interview-agent.md)를 기준으로 하세요.
+> 현재 코드에는 5개 LangGraph 노드(`meta`·`resume`·`trend`·`stress`·`judge`)만 구현돼 있으며,
+> 아래 10개 에이전트 구성은 달성 목표 설계입니다.
+
 ## 📋 프로젝트 정보
 
 **대회**: Solar Pro3 AI Agent 해커톤  
@@ -209,45 +214,20 @@
 
 ## 📂 프로젝트 구조
 
+> 아래는 **현재 구현 기준** 구조입니다. 상세는 [interview-agent.md](./interview-agent.md) 참고.
+
 ```
-interview-agent-project/
-├── agents/
-│   ├── base_agent.py              # BaseAgent 클래스 (Solar API 호출)
-│   ├── resume_agent.py            # Resume Agent
-│   ├── stress_agent.py            # Stress Agent
-│   ├── trend_agent.py             # Trend Agent (선택)
-│   ├── meta_agent.py              # Meta Interview Agent
-│   └── prompts/
-│       ├── resume_prompts.py      # Resume Agent 프롬프트 템플릿
-│       ├── stress_prompts.py
-│       └── meta_prompts.py
-├── backend/
-│   ├── main.py                    # FastAPI 서버
-│   ├── routes/
-│   │   ├── interview.py           # 면접 API 엔드포인트
-│   │   └── health.py              # Health check
-│   ├── services/
-│   │   ├── document_service.py    # 문서 처리 로직
-│   │   ├── research_service.py    # 기업 리서치 로직
-│   │   └── orchestrator.py        # Meta Agent 통합
-│   └── models/
-│       └── schemas.py             # Pydantic 모델
-├── frontend/
-│   ├── app.py                     # Streamlit UI (또는 React)
-│   └── components/
-│       ├── voice_recorder.py      # 음성 녹음 컴포넌트
-│       └── report_viewer.py       # 보고서 뷰어
-├── data/
-│   ├── sample_profile.json        # 테스트용 샘플
-│   └── templates/
-│       └── report_template.html   # PDF 보고서 템플릿
-├── tests/
-│   ├── test_agents.py             # 에이전트 단위 테스트
-│   └── test_integration.py        # 통합 테스트
-├── requirements.txt
-├── .env.example
-├── README.md
-└── PROJECT_OVERVIEW.md            # 이 문서
+backend/
+├── main.py                  # FastAPI 엔트리포인트
+├── pyproject.toml / uv.lock # 의존성 (uv)
+├── app/
+│   ├── config.py            # 환경설정 (pydantic-settings)
+│   ├── agents/              # LangGraph 노드: state, meta, resume, trend, stress, judge
+│   ├── services/            # graph(StateGraph), session_store(Redis), crawler, file_parser
+│   ├── routers/             # session, interview API
+│   ├── models/              # Pydantic 스키마
+│   └── prompts/             # 프롬프트 템플릿 (예정)
+└── scripts/                 # 데이터 수집 스크립트
 ```
 
 ---
@@ -478,11 +458,8 @@ GET /interview/report
 
 ---
 
-## 🔧 기술 구현 상세
+## 🔧 구현 메모
 
-### 1. Solar Pro3 API 호출 (BaseAgent)
-
-```python
-class BaseAgent:
-    def call_solar(self, system_prompt: str, user_message: str) -> str:
-        headers
+- 에이전트 LLM 호출은 `langchain_anthropic.ChatAnthropic`(Claude)로 구현돼 있다.
+- 면접 흐름은 LangGraph `StateGraph`로 조립된다 (`app/services/graph.py`).
+- 실제 코드 구조·실행 방법은 [interview-agent.md](./interview-agent.md)를 참고할 것.

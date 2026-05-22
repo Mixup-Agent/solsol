@@ -44,5 +44,3 @@ Thumbs.db
 # Misc
 .cache/
 tmp/
-
-*.md

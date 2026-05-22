@@ -72,6 +72,20 @@ def init_interview_db() -> None:
             );
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_turns (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id INTEGER NOT NULL,
+              round_no INTEGER NOT NULL,
+              agent_type TEXT,
+              question_text TEXT,
+              audio_path TEXT,
+              transcript TEXT,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
         conn.commit()
 
 
@@ -201,4 +215,41 @@ def get_agent_context(session_id: int) -> tuple[int, dict[str, Any]] | None:
     if row is None:
         return None
     return int(row["id"]), json.loads(row["context_json"])
+
+
+def insert_turn(
+    session_id: int,
+    round_no: int,
+    agent_type: str,
+    question_text: str,
+    audio_path: str,
+    transcript: str,
+) -> int:
+    """면접 턴(음성 답변 1건)을 기록한다. 오디오는 파일로, DB엔 경로·전사 텍스트만 저장."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO interview_turns (
+                session_id, round_no, agent_type, question_text, audio_path, transcript
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, round_no, agent_type, question_text, audio_path, transcript),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def get_turns(session_id: int) -> list[dict[str, Any]]:
+    """세션의 모든 면접 턴을 라운드 순으로 반환한다."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT round_no, agent_type, question_text, transcript
+            FROM interview_turns
+            WHERE session_id = ?
+            ORDER BY round_no, id
+            """,
+            (session_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
