@@ -87,6 +87,35 @@ async def _generate_next_question(session_id: int) -> tuple[str, str]:
     return state["current_question"], agent_type
 
 
+@router.post("/{session_id}/turns/first")
+async def create_first_turn(session_id: int):
+    """면접 첫 질문 생성 — 답변 없이 이력서 기반 오프닝 질문 + TTS 오디오를 반환한다.
+
+    턴 기록이 0건이면 meta가 round 0으로 보고 resume 에이전트를 선택한다.
+    """
+    try:
+        question, agent_type = await _generate_next_question(session_id)
+    except Exception:
+        logger.exception("첫 질문 생성 실패 — 폴백 질문 사용")
+        question, agent_type = "간단히 자기소개를 부탁드립니다.", "resume"
+
+    turn_uid = uuid.uuid4().hex[:8]
+    tts_filename = f"s{session_id}_first_{turn_uid}.mp3"
+    tts = synthesize_speech(question, AUDIO_TTS_DIR / tts_filename)
+    tts_audio_url = (
+        f"/api/audio/tts/{tts_filename}" if tts["status"] == "success" else None
+    )
+
+    return {
+        "round_no": 0,
+        "question": question,
+        "agent_type": agent_type,
+        "tts_audio_url": tts_audio_url,
+        "tts_provider": tts.get("provider"),
+        "tts_status": tts["status"],
+    }
+
+
 @router.post("/{session_id}/turns/audio")
 async def create_audio_turn(
     session_id: int,
