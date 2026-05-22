@@ -12,3 +12,10 @@ langchain
 langgraph
 langchain-anthropic
 pandas
+
+# AI providers
+openai
+anthropic
+
+# HTML parsing
+beautifulsoup4
