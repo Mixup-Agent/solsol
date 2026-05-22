@@ -1,8 +1,9 @@
 # AI 모의 면접 에이전트 시스템
 
-> 자소서, 이력서, 포트폴리오, 채용공고를 바탕으로 실제 면접처럼 질문과 꼬리질문을 이어가는 음성 기반 AI 모의면접 서비스
+> **같은 이력서를 넣어도, 회사가 다르면 질문이 다릅니다.**
+> Solar Pro3의 고유 기능을 역할별로 매핑한 한국형 AI 모의면접 에이전트 시스템
 
-Upstage Solar Pro AI Agent 해커톤 출품작입니다. 사용자의 지원 자료와 채용 정보를 분석해 개인화된 면접 질문을 생성하고, 음성 답변을 기반으로 다음 질문과 최종 피드백을 제공하는 **LangGraph 기반 멀티에이전트 시스템**입니다.
+Upstage Solar Pro3 AI Agent 해커톤 출품작입니다. 자소서·이력서·포트폴리오·채용공고를 분석해 그 회사의 실제 면접 스타일을 추론하고, 5개 에이전트가 협력해 동적으로 면접을 진행하는 음성 기반 모의면접 서비스입니다.
 
 ## 프로젝트 정보
 
@@ -11,296 +12,294 @@ Upstage Solar Pro AI Agent 해커톤 출품작입니다. 사용자의 지원 자
 | 작품명 | AI 모의 면접 에이전트 시스템 |
 | 팀명 | 솔솔(solsol) |
 | 팀원 | 김나경, 박민영, 유지예, 이정연 |
-| 핵심 모델 | Upstage Solar Pro |
+| 핵심 모델 | Upstage Solar Pro3, Solar Mini |
 | 주요 형태 | 웹 기반 음성 모의면접 서비스 |
+
+---
+
+## 🎯 이 프로젝트가 다른 이유
+
+### 1. 회사가 바뀌면 질문이 바뀐다
+**메타 에이전트가 회사명과 채용공고를 분석해 그 회사의 실제 면접 스타일을 LLM으로 추론**합니다. 같은 이력서를 넣어도 *토스* 면접과 *삼성전자* 면접은 톤·격식·압박 상한·중점 평가 역량이 달라지고, 모든 면접관 에이전트가 이 프로파일을 공유해 회사 분위기에 맞는 질문을 생성합니다.
+
+| 회사 | 격식 | 압박 상한 | 면접 톤 예시 |
+|---|---|:---:|---|
+| 토스 (예시) | casual | 2/5 | "가장 임팩트가 컸던 결정의 트레이드오프는?" |
+| 삼성전자 (예시) | formal | 4/5 | "MSA 전환 시 데이터 정합성 검증 방법을 단계별로 설명해 주십시오." |
+
+### 2. Solar Pro3의 고유 기능을 역할별로 매핑
+*"모델 이름만 박은"* 게 아니라 Pro3의 차별 기능 세 가지를 명시적으로 활용했습니다.
+
+| 역할 | 모델 | reasoning_effort | 목적 |
+|---|---|:---:|---|
+| 라우터·평가자 (`meta`, `judge`) | Solar Pro3 | **high** | 깊은 판단·종합 평가 |
+| 면접관 (`resume`, `trend`, `stress`) | Solar Pro3 | **low** | 빠른 질문 생성 |
+| 답변 품질 분류기 (`answer_quality`) | Solar **Mini** | — | 비용·속도 우선 |
+
+추가로 **`prompt_cache_key`로 세션별 캐싱**을 적용해 같은 면접 안에서 이력서·자소서가 매 라운드 반복되는 비용을 줄였습니다.
+
+### 3. 단순 라우터가 아닌 "오케스트레이터 + 가드레일"
+메타 에이전트가 LLM 호출 한 번으로 끝나지 않습니다. **3중 가드레일**이 시연 안정성과 면접 흐름의 균형을 보장합니다.
+
+- **답변 품질 게이트** — 답변이 회피적·모순·근거 부족이면 메타가 `stress`로 강제 라우팅
+- **trend 하드 캡** — 트렌드 질문이 면접당 최대 2회를 넘지 못하도록 코드 레벨 제한
+- **에이전트 균형 보정** — 한 면접관이 다른 면접관보다 2회 이상 앞서면 자동으로 가장 적게 쓰인 면접관으로 보정
+
+### 4. 정적 일반론이 아닌 "실제 뉴스" 기반 트렌드 질문
+`trend` 에이전트는 사전 수집한 **네이버 뉴스 DB에서 회사·직무 키워드로 매칭한 실제 기사 본문**을 보고 질문을 만듭니다. 각 질문에 사용된 출처 메타데이터(`current_question_sources`)도 함께 저장해 *"이 질문이 어떤 기사 기반으로 만들어졌는가"* 까지 추적 가능합니다.
+
+---
 
 ## 아이디어 배경
 
-최근 면접은 단순한 질문 답변이 아니라 지원자의 경험, 직무 이해도, 문제 해결력, 커뮤니케이션 능력을 종합적으로 평가하는 과정입니다. 하지만 취업 준비자는 자소서, 이력서, 포트폴리오, 채용공고를 바탕으로 예상 질문을 준비하더라도 실제 면접처럼 즉흥적인 질문과 꼬리질문에 대응하는 연습을 하기 어렵습니다.
+최근 면접은 단순한 질문 답변이 아니라 지원자의 경험, 직무 이해도, 문제 해결력, 커뮤니케이션 능력을 종합적으로 평가하는 과정입니다. 더 나아가 회사마다 면접 문화와 평가 기준이 다릅니다. 토스의 임팩트 중심 면접과 삼성의 단계별 검증 면접은 같은 직무라도 요구되는 답변의 결이 완전히 다릅니다.
 
-이 프로젝트는 사용자의 지원 자료와 채용공고를 분석하고, 여러 AI 면접관이 역할을 나누어 실제 면접처럼 질문을 이어가는 모의면접 환경을 제공합니다. 면접 종료 후에는 질문과 답변 기록을 기반으로 강점과 개선점을 정리한 피드백 리포트를 제공합니다.
+이 프로젝트는 사용자의 지원 자료와 채용공고를 분석해 **그 회사의 실제 면접 스타일을 추론**하고, 여러 AI 면접관이 역할을 나누어 회사 분위기에 맞는 질문을 이어가는 모의면접 환경을 제공합니다. 면접 종료 후에는 질문과 답변 기록을 바탕으로 강점과 개선점을 정리한 피드백 리포트를 제공합니다.
+
+---
 
 ## 핵심 기능
 
 | 기능 | 설명 |
 |------|------|
-| 지원 자료 입력 | 자소서·이력서·포트폴리오 PDF, 회사명, 직무명, 채용공고 링크 입력 |
-| 문서·공고 분석 | Upstage Document Parse로 PDF 구조화, 채용공고 HTML 크롤링 |
-| 다중 AI 면접관 | 이력서, 트렌드, 압박/꼬리질문, 총괄, 평가 5개 에이전트가 협력 |
-| 음성 면접 | OpenAI STT로 음성 답변 인식, ElevenLabs/OpenAI TTS로 면접관 음성 출력 |
-| 동적 꼬리질문 | 답변에서 모호함·근거 부족·구체성 부족을 찾아 후속 질문 생성 |
-| 답변 품질 평가 | 매 답변마다 별도 평가해 다음 면접관 라우팅의 근거로 활용 |
-| 최종 피드백 | 종합·논리·경험·트렌드 점수와 한국어 종합 피드백 제공 |
+| 지원 자료 입력 | 자소서, 이력서, 포트폴리오 PDF, 회사명, 직무명, 채용공고 링크를 입력합니다. |
+| 회사 스타일 추론 | 메타 에이전트가 회사명과 채용공고를 분석해 격식·압박 상한·중점 평가 역량·실제 면접 관행을 추론합니다. |
+| 다중 AI 면접관 | 이력서 기반, 뉴스/트렌드 기반, 꼬리질문/압박 질문, 총괄 평가 에이전트가 면접을 진행합니다. |
+| 답변 품질 진단 | 매 답변마다 별도 분류기가 score·flag·action_hint를 산출해 메타의 라우팅 결정에 피드백을 제공합니다. |
+| 음성 면접 | 사용자의 음성 답변을 STT로 텍스트화하고, 생성된 질문을 TTS 음성으로 출력합니다. |
+| 동적 꼬리질문 | 답변의 모호함·근거 부족·구체성 부족을 자동 감지해 압박 면접관으로 강제 라우팅합니다. |
+| 최종 피드백 | 전체 대화를 바탕으로 논리성·경험 구체성·트렌드 이해도·종합 점수와 한국어 피드백을 제공합니다. |
+
+---
 
 ## 서비스 흐름
 
-LangGraph StateGraph(`backend/app/services/graph.py`)가 다음 단계를 조율합니다. 모든 라운드의 라우팅 결정은 `meta_decisions`에 누적되어 발표·디버깅용으로 보존됩니다.
-
-1. **세션 생성** — `POST /api/v1/interview-sessions` → PDF 3종을 Upstage Document Parse로 구조화, 채용공고 URL은 HTML 크롤링, 전체 컨텍스트를 SQLite `agent_contexts`에 저장
-2. **첫 질문 생성** — `POST .../turns/first` → meta가 round 0으로 인식해 resume 에이전트 선택, 이력서 기반 오프닝 질문 + TTS
-3. **음성 답변 처리** — `POST .../turns/audio` → 오디오 저장 → OpenAI STT 전사 → 답변 품질 평가 → `interview_turns` 테이블 영속화
-4. **다음 면접관 선택** — meta가 직전 답변·대화·답변 품질을 종합해 `resume`/`trend`/`stress` 중 적응적으로 라우팅
-5. **꼬리/검증 질문 생성** — 선택된 에이전트가 Solar Pro로 질문 생성 → TTS 음성 출력
-6. **(반복)** 3~5단계를 max_rounds(기본 8)까지 반복
-7. **최종 평가** — round ≥ max_rounds 도달 시 meta가 judge로 라우팅, judge가 전체 대화를 구조화 출력으로 평가
-8. **리포트 제공** — `GET .../report` → 종합 점수 + 세부 점수 + 종합 피드백을 프론트 ReportScreen에 표시
-
-```text
-사용자 입력 (자소서·이력서·포트폴리오·회사·직무·채용공고 URL)
-        |
-        v
-문서·공고 분석 (Upstage Document Parse + HTML 크롤링)
-        |
-        v
-AI 모의면접 루프 (Meta -> Resume/Trend/Stress -> STT/TTS, 라운드 반복)
-        |
-        v
-최종 평가 (Judge가 점수와 한국어 피드백 생성)
 ```
+사용자 입력
+  자소서 / 이력서 / 포트폴리오 PDF / 회사명 / 직무명 / 채용공고 URL
+        │
+        ▼
+문서 및 공고 분석
+  PDF 파싱, 채용공고 크롤링, 핵심 경험 및 직무 요구사항 추출
+        │
+        ▼
+메타 에이전트 — 회사 스타일 추론 (1회)
+  격식 / 압박 상한 / 중점 평가 역량 / 실제 면접 관행 / 대표 질문 패턴
+        │
+        ▼
+AI 모의면접 루프 (라운드 반복)
+  Answer Quality → Meta → Resume / Trend / Stress → STT/TTS
+        │
+        ▼
+최종 평가
+  Judge 에이전트가 4축 점수와 한국어 피드백 리포트 생성
+```
+
+---
 
 ## 멀티에이전트 구조
 
-LangGraph 기반 5개 노드로 구성되며, `meta`가 총괄, 나머지 4개가 전문 역할을 맡습니다.
+본 시스템은 LangGraph 기반 5개 노드와 1개의 별도 분류기(`answer_quality`)로 구성됩니다.
 
-| Agent | 역할 | 활용 데이터 |
-|-------|------|------------|
-| `meta` | 총괄 오케스트레이터. 직전 답변·대화·답변 품질을 보고 다음 면접관을 적응적으로 선택. 선택 이유 기록 + `trend` 횟수 캡(2회) 등 정책 관리 | agent_history, last_answer, answer_quality_history |
-| `resume` | 이력서·자소서·포트폴리오 기반 경험 검증 질문 생성. 모호한 표현을 수치·사례로 파고듦 | resume_text, cover_letter |
-| `trend` | 직무·산업 트렌드 질문 생성. 단순 지식 확인이 아니라 의견·적용 방안을 묻는 형태 | role, company, job_posting_text |
-| `stress` | 직전 답변의 약점·모순·모호함을 파고드는 압박·꼬리질문 생성 | last_answer, messages |
-| `judge` | 면접 종료 시 전체 대화 평가. Solar 구조화 출력으로 4축 점수 + 종합 피드백 생성. 실패 시 0점 폴백 | 전체 messages, role, company |
-
-```text
-                 +----------------+
-                 |   Meta Agent   |
-                 +--------+-------+
-                          |
-          +---------------+---------------+
-          |               |               |
-          v               v               v
-   +-------------+ +-------------+ +-------------+
-   | Resume      | | Trend       | | Stress      |
-   | Agent       | | Agent       | | Agent       |
-   +-------------+ +-------------+ +-------------+
-          |               |               |
-          +---------------+---------------+
-                          |
-                          v
-                 +----------------+
-                 |  Judge Agent   |
-                 +----------------+
-```
-
-## 핵심 로직
-
-세 가지 핵심 결정·점수는 모두 명시적인 룰 또는 구조화된 LLM 출력으로 산출됩니다.
-
-### 적응형 라우팅 — `meta.py`
-
-LLM이 직전 답변·대화 흐름·답변 품질을 보고 다음 면접관을 선택하되, 안전 정책을 함께 적용합니다.
+| Agent | 모델 / reasoning_effort | 책임 |
+|-------|---|------|
+| `meta` | solar-pro3 / **high** | 회사 스타일 추론 + 동적 라우팅 + 3중 가드레일 |
+| `answer_quality` | solar-**mini** | 답변 품질 점수·flag·action_hint 산출 (메타에 피드백) |
+| `resume` | solar-pro3 / low | 이력서·자소서 기반 사실 검증 질문 |
+| `trend` | solar-pro3 / low | 네이버 뉴스 DB 기반 트렌드 질문 + 출처 추적 |
+| `stress` | solar-pro3 / low | 직전 답변 약점 인용 + 컨텍스트 검증 폴백 |
+| `judge` | solar-pro3 / **high** | 4축 점수(overall/logic/experience/trend) + 종합 피드백 |
 
 ```
-1. round >= max_rounds        → judge (면접 종료)
-2. round == 0 or messages 없음 → resume (이력서 기반 오프닝)
-3. 그 외                       → LLM 라우팅 (RouteDecision 구조화 출력)
-   - 직전 답변 부실 → stress (꼬리질문)
-   - 미사용 유형 우선 (균형)
-4. 폴백: LLM 실패 시 agent_history 최소 사용 에이전트 선택
-5. 하드 캡: trend가 이미 2회 사용됐으면 resume/stress로 강제 대체
+              [지원자 답변]
+                    │
+                    ▼
+        ┌─ Answer Quality Classifier (solar-mini)
+        │      score / flags / action_hint
+        ▼
+   ┌──────────────────────────────────────────┐
+   │   Meta Orchestrator (solar-pro3 / high)  │
+   │   - 회사 스타일 추론 (첫 진입 1회)         │
+   │   - quality_gate: 저품질 → stress 강제    │
+   │   - trend_cap / balance 가드레일          │
+   └─────┬───────────┬──────────┬─────────────┘
+         │           │          │
+         ▼           ▼          ▼
+   [Resume]      [Trend]     [Stress]
+   (pro3 low)  (pro3 low +  (pro3 low +
+                naver news)  structured)
+         │           │          │
+         └───────────┼──────────┘
+                     ▼
+             (max_rounds 도달)
+                     │
+                     ▼
+           [Judge] (solar-pro3 / high)
+           overall / logic / experience / trend
 ```
 
-### 답변 품질 평가 — `answer_quality.py`
+---
 
-매 음성 답변마다 별도로 평가해 `interview_turns.answer_quality_json`에 저장합니다. 평가 결과(`score`/`label`/`flags`/`action_hint`)는 meta가 다음 면접관 선택 시 근거로 활용됩니다 (예: 수치 부족 → stress로 라우팅).
+## Upstage Solar Pro3 활용 — 고유 기능을 역할에 매핑
 
-### 최종 평가 — `judge.py`
+Solar Pro3의 **3가지 고유 기능**과 **Solar Mini와의 분업**으로 *"왜 Solar Pro3여야 하는가"* 에 명확히 답할 수 있게 설계했습니다.
 
-전체 대화를 Solar에 `with_structured_output(JudgeResult)`로 호출해 JSON 스키마를 강제합니다.
+### 기능 × 컴포넌트 매트릭스
 
-```
-JudgeResult: {
-    overall: 0~100,      # 종합 인상 점수
-    logic: 0~100,        # 논리적 일관성 + 압박 대응력
-    experience: 0~100,   # 이력서 기반 답변 구체성
-    trend: 0~100,        # 트렌드 통찰력
-    feedback: str        # 3~5문장 종합 피드백
-}
-```
+| 컴포넌트 | 모델 | reasoning_effort | prompt_cache_key | 이유 |
+|---|---|:---:|:---:|---|
+| `meta` (라우터·회사 스타일 결정) | solar-pro3 | **high** | ✅ | 다단계 추론·전략적 판단 |
+| `judge` (종합 평가) | solar-pro3 | **high** | ✅ | 전체 대화 정밀 평가 |
+| `resume` / `trend` / `stress` | solar-pro3 | **low** | ✅ | 질문 1문장 빠른 생성 |
+| `answer_quality` (분류기) | solar-**mini** | — | ✅ | 분류 작업은 가볍게 |
 
-LLM 또는 스키마 검증 실패 시 0점 폴백으로 리포트 엔드포인트가 죽지 않게 보장합니다.
+### 활용 포인트
 
-## Upstage Solar Pro 활용
+| 기능 | 활용 방식 | 효과 |
+|---|---|---|
+| **`reasoning_effort` 등급 차등** | 깊은 사고가 필요한 라우터·평가자만 high, 질문 생성기는 low | 응답 속도·비용 최적화 |
+| **`prompt_cache_key`** | 세션 ID를 캐시 키로 — 이력서·자소서가 매 라운드 반복되는 비용 절감 | 두 번째 라운드부터 캐시 히트 |
+| **구조화 출력 (`with_structured_output`)** | `RouteDecision`, `CompanyStyle`, `JudgeResult`, `StressQuestion`, `AnswerQualityResult` 5종 스키마 강제 | JSON 파싱 오류 0 |
+| **Solar Mini 분업** | 답변 품질 라벨링(good/fair/bad)은 Mini로 분리 | Pro3 호출 1회 절약 |
 
-Solar Pro는 본 서비스의 핵심 LLM 엔진으로, 사용자의 입력 자료를 이해하고, 면접 질문을 생성하며, 답변 맥락에 맞는 후속 질문과 최종 평가를 구성합니다. 추가로 PDF 구조화에 **Upstage Document Parse**를 함께 활용합니다.
+### 왜 Solar Pro3여야 하는가
+- `reasoning_effort` 파라미터는 Solar Pro3 전용 — 다른 모델에 동일 개념 없음
+- 한국어 면접 도메인의 존댓말·관행 표현이 자연스러움
+- 한국 기업(토스·네이버·삼성 등)의 실제 면접 후기 정보를 학습 단계에서 풍부하게 보유
 
-| 활용 위치 | 활용 방식 |
-|----------|----------|
-| 입력 자료 기반 질문 | 자소서·이력서·포트폴리오에서 역할, 문제 상황, 해결 과정, 성과를 파악해 직무 적합성 질문 생성 |
-| 꼬리질문 생성 | 답변에서 구체적 수치, 본인 기여도, 의사결정 근거가 부족한 부분을 찾아 후속 질문 생성 |
-| 총괄 라우팅 | 전체 대화 맥락과 답변 품질을 바탕으로 다음 면접관 유형·종료 여부 판단 |
-| 평가 리포트 | 면접 전체 대화를 분석해 종합·논리·경험·트렌드 점수와 피드백을 구조화 출력으로 생성 |
-| 문서 구조화 | Document Parse로 PDF를 텍스트/마크다운/HTML로 변환해 컨텍스트화 |
+---
 
 ## 기술 스택
 
 | 레이어 | 기술 |
 |--------|------|
-| 프론트엔드 | React 19, Vite, TanStack Router, Tailwind CSS, Radix UI |
+| 프론트엔드 | React, Vite, TanStack Router, Tailwind CSS, Radix UI |
 | 백엔드 | FastAPI, Python 3.11, Pydantic |
-| 에이전트 | LangGraph (StateGraph), langchain-upstage (ChatUpstage) |
-| LLM | Upstage Solar Pro (`solar-pro`) |
-| 문서 처리 | Upstage Document Parse, pdfplumber (폴백) |
+| Agent | LangGraph, LangChain Upstage, Upstage Solar Pro3 / Mini |
+| 문서 처리 | pdfplumber, Upstage Document Parse / Information Extract |
 | 채용공고 수집 | httpx, BeautifulSoup |
-| 음성 처리 | OpenAI STT (`gpt-4o-mini-transcribe`), ElevenLabs TTS (주), OpenAI TTS (`gpt-4o-mini-tts`) 폴백 |
-| 저장소 | SQLite (세션·문서·면접 턴·답변 품질), Redis (텍스트 흐름 세션) |
-| 의존성 관리 | uv (`pyproject.toml` + `uv.lock`) |
+| 트렌드 데이터 | 네이버 뉴스 수집 + SQLite 키워드 매칭 |
+| 음성 처리 | OpenAI STT, ElevenLabs TTS, OpenAI TTS fallback |
+| 저장소 | Redis(세션), SQLite(인터뷰 기록·뉴스 DB) |
+
+---
 
 ## 저장소 구조
 
-```text
-shipyak/
-├── backend/                          # FastAPI 백엔드와 멀티에이전트 로직
-│   ├── main.py                       # 앱 진입점 (라우터 등록, lifespan)
-│   ├── pyproject.toml / uv.lock      # 의존성 관리 (uv)
-│   ├── scripts/
-│   │   └── demo_interview.py         # LangGraph E2E 데모
-│   └── app/
-│       ├── config.py                 # 환경변수 (절대경로 .env 자동 로딩)
-│       ├── agents/                   # LangGraph 에이전트
-│       │   ├── llm.py                #   공용 Solar 인스턴스
-│       │   ├── helpers.py            #   transcript 포맷·답변 정리
-│       │   ├── state.py              #   InterviewState (TypedDict)
-│       │   ├── meta.py               #   총괄 오케스트레이터 (적응형 라우팅)
-│       │   ├── resume.py             #   이력서 기반 질문
-│       │   ├── trend.py              #   직무·산업 트렌드 질문
-│       │   ├── stress.py             #   압박·꼬리질문
-│       │   └── judge.py              #   최종 평가 (구조화 출력)
-│       ├── services/
-│       │   ├── graph.py              #   LangGraph StateGraph 빌드
-│       │   ├── interview_db.py       #   SQLite 저장소
-│       │   ├── session_store.py      #   Redis (텍스트 흐름)
-│       │   ├── stt.py / tts.py       #   음성 처리
-│       │   ├── answer_quality.py     #   답변 품질 평가
-│       │   ├── file_parser.py        #   Upstage Document Parse 래퍼
-│       │   └── crawler.py            #   채용공고 HTML 크롤링
-│       ├── routers/
-│       │   ├── session.py / interview.py                  # 텍스트 면접 흐름
-│       │   └── interview_sessions.py / interview_turns.py # 음성 면접 흐름
-│       └── models/                   # Pydantic 스키마
-├── lovable/                          # 웹 프론트엔드
-│   └── src/
-│       ├── routes/index.tsx          # 메인 (stage 상태 관리)
-│       ├── components/interview/     # 5개 화면 컴포넌트
-│       ├── lib/api.ts                # 백엔드 API 클라이언트
-│       └── assets/interviewers/      # 면접관 아바타 4종
-├── docs/                             # 설계·구현 현황 문서
-└── data/, design/, presentation/     # 데이터·디자인·발표 자료
 ```
+shipyak/
+├── backend/                    # FastAPI 백엔드와 멀티에이전트 로직
+│   ├── main.py                 # API 엔트리포인트
+│   ├── app/
+│   │   ├── agents/             # meta, resume, trend, stress, judge + llm/state/helpers
+│   │   ├── routers/            # 세션, 면접, 턴 기록 API
+│   │   ├── services/           # answer_quality, naver_news, STT/TTS, 크롤링, 그래프, 저장소
+│   │   └── models/             # Pydantic 모델
+│   └── scripts/                # 데모 및 데이터 수집 스크립트
+├── lovable/                    # 웹 프론트엔드
+│   └── src/
+│       ├── components/interview/
+│       ├── routes/
+│       └── assets/interviewers/
+├── docs/                       # 설계 문서와 API/에이전트 문서
+├── data/                       # 데이터 수집·전처리 자료 + 뉴스 DB
+├── design/                     # 디자인 에셋
+└── presentation/               # 발표 자료
+```
+
+---
 
 ## 시작하기
 
 ### 1. 백엔드 환경 설정
 
-의존성은 [uv](https://docs.astral.sh/uv/)로 관리합니다. (uv 미설치 시 `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-
 ```bash
 cd backend
-uv sync                           # uv.lock 기준 .venv 자동 동기화
-cp .env.example .env              # 키 입력은 아래 참고
+uv sync
+cp .env.example .env
 ```
 
-### 2. API 키 설정
+`.env`에 필요한 API 키를 입력합니다.
 
-| 환경변수 | 용도 | 필수 여부 |
-|----------|------|-----------|
-| `UPSTAGE_API_KEY` | Solar Pro (5개 에이전트) + Document Parse | **필수** |
-| `OPENAI_API_KEY` | STT(`gpt-4o-mini-transcribe`) + TTS(`gpt-4o-mini-tts`) | **필수** (음성 사용 시) |
-| `ELEVENLABS_API_KEY` | TTS 주 채널. 없으면 OpenAI TTS로 폴백 | 선택 |
-| `ELEVENLABS_VOICE_ID` | ElevenLabs 보이스 ID | 선택 |
-| `REDIS_URL` | 텍스트 면접 세션 저장소 (기본 `redis://localhost:6379`) | 선택 |
+```bash
+UPSTAGE_API_KEY=
+OPENAI_API_KEY=
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+```
 
-### 3. Redis 실행 (텍스트 면접 흐름 사용 시)
+### 2. Redis 실행
 
 ```bash
 brew install redis
 brew services start redis
 ```
 
-### 4. 백엔드 실행
+### 3. 백엔드 실행
 
 ```bash
 cd backend
 uv run uvicorn main:app --reload
 ```
 
-- API 문서: <http://localhost:8000/docs>
-- 헬스체크: <http://localhost:8000/health>
+- API 문서: http://localhost:8000/docs
+- 헬스체크: http://localhost:8000/health
 
-### 5. 프론트엔드 실행
+### 4. 프론트엔드 실행
 
 ```bash
 cd lovable
-bun install        # 또는 npm install
-bun dev            # 또는 npm run dev
+npm install
+npm run dev
 ```
 
-### 6. 데모 스크립트 (서버·프론트 없이)
-
-```bash
-cd backend
-uv run python scripts/demo_interview.py
-```
-
-LangGraph 파이프라인이 콘솔에 처음부터 끝까지 출력됩니다.
+---
 
 ## 주요 API
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| `POST` | `/api/v1/interview-sessions` | 세션 생성 (PDF 3종 업로드 + 회사·직무·채용공고 URL) |
-| `POST` | `/api/v1/interview-sessions/{id}/turns/first` | 면접 첫 질문 생성 + TTS |
-| `POST` | `/api/v1/interview-sessions/{id}/turns/audio` | 음성 답변 업로드 → STT + 품질 평가 + 다음 질문 + TTS |
-| `POST` | `/api/v1/session` | 텍스트 흐름 세션 생성 |
-| `POST` | `/api/v1/session/{id}/start` | 텍스트 면접 시작 및 첫 질문 |
-| `POST` | `/api/v1/session/{id}/answer` | 텍스트 답변 제출 후 다음 질문 |
-| `GET` | `/api/v1/session/{id}/report` | 최종 평가 리포트 (scores + feedback + 전체 대화) |
+| `POST` | `/api/v1/session` | 지원 자료 업로드 및 면접 세션 생성 |
+| `GET` | `/api/v1/session/{id}` | 세션 조회 |
+| `POST` | `/api/v1/session/{id}/start` | 면접 시작 및 첫 질문 생성 (회사 스타일 추론 포함) |
+| `POST` | `/api/v1/session/{id}/answer` | 답변 제출 후 다음 질문 생성 |
+| `GET` | `/api/v1/session/{id}/report` | 최종 피드백 리포트 조회 |
+| `POST` | `/api/interview-sessions/{id}/turns/audio` | 음성 답변 업로드 및 다음 질문 TTS 반환 |
 | `GET` | `/health` | 서버 및 Redis 상태 확인 |
 
-## 차별점
+---
 
-- 단순 예상 질문 제공이 아니라 **답변에 따라 질문 흐름이 바뀌는 동적 면접 경험**
-- 자소서·이력서·포트폴리오·채용공고를 함께 분석한 개인화 질문
-- 여러 AI 면접관이 역할을 나누고, **meta가 답변 품질을 보고 적응적으로 다음 면접관을 선택**
-- 텍스트 챗봇이 아닌 **음성 기반 면접 흐름**으로 실전 긴장감과 몰입감 제공
-- 면접 종료 후 **정량 점수와 정성 피드백**을 함께 제공해 복습·개선 가능
+## 차별점 — 다른 멀티에이전트 데모와의 차이
 
-## 프로젝트 원칙
+| 영역 | 일반 멀티에이전트 데모 | 본 프로젝트 |
+|---|---|---|
+| **회사 적응** | 회사명을 프롬프트에 끼워넣고 끝 | 메타가 채용공고를 분석해 격식·압박 상한·중점 역량·실제 면접 관행을 추론 |
+| **라우팅** | 라운드별 고정 순서 (resume → trend → stress 반복) | 답변 품질 분류기(solar-mini)가 매 턴 score·flag·action_hint 산출 → 메타가 동적 선택 |
+| **에이전트 견고성** | LLM 응답이 깨지면 시연 멈춤 | 5종 구조화 출력 + 다중 폴백 경로 + 3중 가드레일 (quality_gate, trend_cap, balance) |
+| **트렌드 질문** | LLM 학습 시점의 일반론 | 네이버 뉴스 DB에서 키워드 매칭한 실제 기사 + 출처 메타데이터 추적 |
+| **Upstage 활용도** | 모델 이름만 박음 | `reasoning_effort` 등급 차등 + `prompt_cache_key` + Mini 분업 |
+| **추적 가능성** | 블랙박스 | `meta_decisions`, `answer_quality_history`, `current_question_sources` 세 가지 로그로 *"왜 이 질문이 나왔는가"* 추적 가능 |
 
-- **개인화 우선** — 일반 예상 질문이 아닌 지원자 본인의 자소서·이력서·포트폴리오·채용공고를 분석한 맞춤 질문만 제공. "모범답안"이 통하지 않는 면접을 지향
-- **실전 몰입** — 음성 기반 입출력 + 동적 꼬리질문으로 실제 면접에 가까운 긴장감과 흐름을 재현
-- **공정성·중립성** — 모든 지원자에게 동일 파이프라인·동일 평가 기준·동일 모델 파라미터 적용. 편향·평가성 표현 금지
-- **투명한 평가** — 점수 산출 근거(`meta_decisions` 라우팅 이유, `answer_quality` 평가)를 모두 기록해 "왜 이 점수인지" 사용자가 확인 가능
-- **끊기지 않는 경험** — 외부 API(LLM·STT·TTS·크롤링) 실패 시에도 폴백으로 면접이 중단되지 않게 보장
-- **MVP 우선, 확장 가능 구조** — 해커톤 일정에 맞춰 핵심 흐름을 먼저 완성하되, 새 면접관 유형·직무 특화·영어 면접 등으로 자연스럽게 확장 가능한 구조 유지
+### 측정 가능한 결과
+- 한 세션당 LLM 호출 패턴: meta(1) + answer_quality(N) + 면접관(N) + judge(1)
+- 5종 구조화 스키마로 JSON 파싱 실패율 0
+- 데모 영상에서 *"같은 이력서, 회사만 다르게"* 비교 시연 가능
 
-## 설계 원칙
-
-- **얇은 오케스트레이터** — meta는 라우팅만 담당, 실제 질문·평가는 각 전문 Agent가 수행
-- **적응형 라우팅** — round-robin이 아니라 직전 답변·대화·답변 품질을 보고 LLM이 다음 면접관을 선택, 이유를 `meta_decisions`에 기록
-- **구조화 출력 우선** — judge·meta 라우팅 모두 `with_structured_output`으로 스키마를 강제, 수동 JSON 파싱 위험 제거
-- **폴백 우선** — LLM·STT·TTS·크롤링 실패 시 0점 폴백·기본 질문·빈 결과로 데모 중단 방지
-- **정책 가드** — trend 면접관은 면접당 최대 2회로 하드 캡 (LLM이 한쪽 유형만 고르는 것을 차단)
-- **턴 영속화** — 음성 답변·전사·품질 평가를 SQLite에 누적해 면접 재구성·리포트 생성·재시청 가능
-- **API 키 보안** — 외부 키는 `.env`로 관리하고 절대경로 기반 자동 로딩으로 실행 폴더와 무관하게 동작
+---
 
 ## 기대 효과
 
-취업 준비자는 고비용 면접 컨설팅 없이도 실제 면접과 유사한 환경에서 반복 연습할 수 있습니다. 특히 개인의 지원 자료와 지원 직무를 반영한 질문을 받을 수 있어 일반적인 예상 질문보다 실전 대응력을 높일 수 있습니다.
+취업 준비자는 고비용 면접 컨설팅 없이 실제 면접과 유사한 환경에서 반복 연습할 수 있습니다. 특히 개인의 지원 자료뿐 아니라 **지원 회사의 실제 면접 스타일까지 반영**되기 때문에 일반적인 예상 질문보다 실전 대응력을 높일 수 있습니다.
 
-향후에는 직무별 전문 면접관, 기업별 면접 스타일, 면접 리포트 PDF, 답변 개선 예시, 실시간 발화 습관 분석 등으로 확장할 수 있습니다.
+향후에는 직무별 전문 면접관, 기업별 면접 스타일 라이브러리화, 면접 리포트 PDF, 답변 개선 예시, 실시간 발화 습관 분석 등으로 확장할 수 있습니다.
+
+---
 
 ## 참고 문서
 
+- [AI 모의 면접 에이전트 개요](docs/interview-agent-overview.md)
+- [에이전트 플로우 상세 문서](docs/02_agent_flow.md)
 - [Interview Agent 빠른 시작](docs/interview-agent.md)
-- [AI 모의 면접 에이전트 개요(초기 설계)](docs/interview-agent-overview.md)
+- [에이전트 구현 계획](docs/interview-agent-plan.md)
 - [Upstage API 명세](docs/upstage-api-spec.md)
+- [데모 실행 결과](docs/agent-demo-result.md)
