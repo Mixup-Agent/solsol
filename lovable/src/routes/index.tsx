@@ -37,7 +37,12 @@ function Index() {
         />
       )}
       {stage === "interview" && (
-        <InterviewScreen company={meta.company} role={meta.role} onEnd={() => setStage("analyzing")} />
+        <InterviewScreen
+          company={meta.company}
+          role={meta.role}
+          sessionId={meta.sessionId}
+          onEnd={() => setStage("analyzing")}
+        />
       )}
       {stage === "analyzing" && <AnalyzingScreen onDone={() => setStage("report")} />}
       {stage === "report" && (
