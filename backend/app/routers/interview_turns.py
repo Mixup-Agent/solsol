@@ -11,6 +11,7 @@ from app.agents.resume import resume_agent
 from app.agents.state import InterviewState
 from app.agents.stress import stress_agent
 from app.agents.trend import trend_agent
+from app.services.answer_quality import evaluate_answer_quality
 from app.services.interview_db import get_agent_context, get_turns, insert_turn
 from app.services.stt import transcribe_audio
 from app.services.tts import synthesize_speech
@@ -44,11 +45,28 @@ def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
     docs = ctx.get("candidate_documents", {})
 
     messages: list[dict] = []
+    quality_history: list[dict] = []
     for t in turns:
         if t.get("question_text"):
             messages.append({"role": "interviewer", "content": t["question_text"]})
         if t.get("transcript"):
             messages.append({"role": "candidate", "content": t["transcript"]})
+            quality = t.get("answer_quality") or {
+                "score": 55,
+                "label": "fair",
+                "flags": [],
+                "feedback": "저장된 답변 품질 데이터가 없어 follow-up 기준으로 처리합니다.",
+                "action_hint": "followup",
+            }
+            quality_history.append(
+                {
+                    "round_no": t.get("round_no"),
+                    "agent_type": t.get("agent_type"),
+                    "question_text": t.get("question_text") or "",
+                    "transcript": t.get("transcript") or "",
+                    **quality,
+                }
+            )
 
     return {
         "session_id": str(session_id),
@@ -62,9 +80,12 @@ def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
         "max_rounds": _VOICE_MAX_ROUNDS,
         "messages": messages,
         "agent_history": [t["agent_type"] for t in turns if t.get("agent_type")],
+        "meta_decisions": [],
+        "answer_quality_history": quality_history,
         "current_agent": None,
         "current_question": None,
         "last_answer": turns[-1]["transcript"] if turns else None,
+        "last_answer_quality": quality_history[-1] if quality_history else None,
         "is_done": False,
         "scores": {},
         "feedback": None,
@@ -154,6 +175,12 @@ async def create_audio_turn(
             "tts_audio_url": None,
         }
     transcript = stt["transcript"]
+    prev_turns = get_turns(session_id)
+    answer_quality = await evaluate_answer_quality(
+        question_text=question_text,
+        answer_text=transcript,
+        recent_answers=[t.get("transcript") or "" for t in prev_turns if t.get("transcript")],
+    )
 
     # ③ 이번 턴을 DB에 기록 (음성 답변 영속화)
     try:
@@ -164,6 +191,7 @@ async def create_audio_turn(
             question_text=question_text,
             audio_path=str(answer_path),
             transcript=transcript,
+            answer_quality=answer_quality,
         )
     except Exception:
         logger.exception("interview_turn 저장 실패 — 계속 진행")
@@ -187,6 +215,7 @@ async def create_audio_turn(
     return {
         "turn_id": turn_uid,
         "transcript": transcript,
+        "answer_quality": answer_quality,
         "stt_status": "success",
         "stt_provider": stt["provider"],
         "next_question": next_question,

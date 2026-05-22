@@ -51,6 +51,31 @@ def _record(state: InterviewState, agent: str, reason: str) -> list[dict]:
     ]
 
 
+def _quality_gate(state: InterviewState) -> tuple[bool, str]:
+    """직전 답변 품질이 낮으면 stress로 강제 라우팅한다."""
+    quality = state.get("last_answer_quality") or {}
+    flags = set(quality.get("flags") or [])
+    score = int(quality.get("score") or 0)
+    action_hint = quality.get("action_hint")
+
+    trigger_flags = {
+        "too_short",
+        "evasive",
+        "repetition",
+        "irrelevant",
+        "off_topic",
+        "unsupported_claim",
+        "inconsistent",
+    }
+    if action_hint == "stress" or score <= 45 or flags & trigger_flags:
+        reason = (
+            "직전 답변 품질 저하 감지"
+            f"(score={score}, hint={action_hint or 'none'}, flags={','.join(sorted(flags)) or 'none'})"
+        )
+        return True, reason
+    return False, ""
+
+
 async def meta_agent(state: InterviewState) -> InterviewState:
     """
     역할: 종료 판단 + 다음 면접관(resume/trend/stress) 적응적 선택.
@@ -73,6 +98,14 @@ async def meta_agent(state: InterviewState) -> InterviewState:
             **state,
             "current_agent": "resume",
             "meta_decisions": _record(state, "resume", "면접 시작 — 이력서 기반 오프닝"),
+        }
+
+    force_stress, force_reason = _quality_gate(state)
+    if force_stress:
+        return {
+            **state,
+            "current_agent": "stress",
+            "meta_decisions": _record(state, "stress", force_reason),
         }
 
     history = state["agent_history"]

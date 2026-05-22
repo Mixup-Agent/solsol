@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.agents.state import InterviewState
 from app.models.interview import AnswerRequest, AnswerResponse, ReportResponse, StartResponse
+from app.services.answer_quality import evaluate_answer_quality
 from app.services.graph import build_interview_graph
 from app.services.interview_db import get_agent_context
 from app.services.session_store import get_session, update_session
@@ -30,9 +31,11 @@ def _build_state_from_context(session_id: str, context: dict) -> InterviewState:
         "messages": [],
         "agent_history": [],
         "meta_decisions": [],
+        "answer_quality_history": [],
         "current_agent": None,
         "current_question": None,
         "last_answer": None,
+        "last_answer_quality": None,
         "is_done": False,
         "scores": {},
         "feedback": None,
@@ -72,9 +75,11 @@ async def start_interview(session_id: str):
             "messages": [],
             "agent_history": [],
             "meta_decisions": [],
+            "answer_quality_history": [],
             "current_agent": None,
             "current_question": None,
             "last_answer": None,
+            "last_answer_quality": None,
             "is_done": False,
             "scores": {},
             "feedback": None,
@@ -102,9 +107,30 @@ async def submit_answer(session_id: str, body: AnswerRequest):
         raise HTTPException(400, "진행 중인 면접이 없습니다")
 
     state: InterviewState = session["interview_state"]
+    latest_question = state.get("current_question") or ""
+    recent_answers = [
+        m.get("content", "")
+        for m in state.get("messages", [])
+        if m.get("role") == "candidate"
+    ]
 
     state["messages"].append({"role": "candidate", "content": body.answer})
     state["last_answer"] = body.answer
+    quality = await evaluate_answer_quality(
+        question_text=latest_question,
+        answer_text=body.answer,
+        recent_answers=recent_answers,
+    )
+    state["last_answer_quality"] = quality
+    state.setdefault("answer_quality_history", []).append(
+        {
+            "round_no": state["round"] + 1,
+            "agent_type": state.get("current_agent"),
+            "question_text": latest_question,
+            "transcript": body.answer,
+            **quality,
+        }
+    )
     state["round"] += 1
 
     graph = build_interview_graph()
@@ -172,9 +198,23 @@ async def finalize_interview(session_id: str):
                     "messages": messages,
                     "agent_history": [t["agent_type"] for t in turns if t.get("agent_type")],
                     "meta_decisions": [],
+                    "answer_quality_history": [
+                        {
+                            "round_no": t.get("round_no"),
+                            "agent_type": t.get("agent_type"),
+                            "question_text": t.get("question_text") or "",
+                            "transcript": t.get("transcript") or "",
+                            **(t.get("answer_quality") or {}),
+                        }
+                        for t in turns
+                        if t.get("transcript")
+                    ],
                     "current_agent": None,
                     "current_question": None,
                     "last_answer": turns[-1]["transcript"] if turns else None,
+                    "last_answer_quality": (
+                        (turns[-1].get("answer_quality") if turns else None) or None
+                    ),
                     "is_done": False,
                     "scores": {},
                     "feedback": None,

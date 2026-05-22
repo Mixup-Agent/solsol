@@ -17,11 +17,13 @@ class InterviewState(TypedDict):
     messages: list[dict]              # 대화 히스토리 {"role": "interviewer"|"candidate", "content": "..."}
     agent_history: list[str]          # 호출된 에이전트 순서 ["resume", "trend", ...]
     meta_decisions: list[dict]        # meta 라우팅 기록 [{"round","agent","reason"}, ...]
+    answer_quality_history: list[dict]  # 답변 품질 진단 기록 [{"score","label","flags",...}, ...]
 
     # 현재 턴 데이터
     current_agent: Optional[str]      # "resume" | "trend" | "stress" | "judge"
     current_question: Optional[str]   # 현재 질문 텍스트
     last_answer: Optional[str]        # 지원자의 마지막 답변
+    last_answer_quality: Optional[dict]  # 직전 답변의 품질 진단 결과
 
     # 종료 및 평가
     is_done: bool                     # 면접 종료 여부
