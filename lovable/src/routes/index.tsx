@@ -22,7 +22,7 @@ type Stage = "landing" | "input" | "interview" | "analyzing" | "report";
 
 function Index() {
   const [stage, setStage] = useState<Stage>("landing");
-  const [meta, setMeta] = useState({ company: "토스", role: "프로덕트 디자이너" });
+  const [meta, setMeta] = useState({ company: "토스", role: "프로덕트 디자이너", sessionId: "" });
 
   return (
     <div className="min-h-screen bg-background">
@@ -44,6 +44,7 @@ function Index() {
         <ReportScreen
           company={meta.company}
           role={meta.role}
+          sessionId={meta.sessionId}
           onRestart={() => setStage("interview")}
           onNew={() => setStage("input")}
         />
