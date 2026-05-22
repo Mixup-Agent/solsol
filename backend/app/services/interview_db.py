@@ -82,10 +82,15 @@ def init_interview_db() -> None:
               question_text TEXT,
               audio_path TEXT,
               transcript TEXT,
+              answer_quality_json TEXT,
               created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
+        turn_columns = conn.execute("PRAGMA table_info(interview_turns)").fetchall()
+        turn_col_names = {col[1] for col in turn_columns}
+        if "answer_quality_json" not in turn_col_names:
+            conn.execute("ALTER TABLE interview_turns ADD COLUMN answer_quality_json TEXT")
         conn.commit()
 
 
@@ -224,16 +229,25 @@ def insert_turn(
     question_text: str,
     audio_path: str,
     transcript: str,
+    answer_quality: dict[str, Any] | None = None,
 ) -> int:
     """면접 턴(음성 답변 1건)을 기록한다. 오디오는 파일로, DB엔 경로·전사 텍스트만 저장."""
     with _connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO interview_turns (
-                session_id, round_no, agent_type, question_text, audio_path, transcript
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                session_id, round_no, agent_type, question_text, audio_path, transcript, answer_quality_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (session_id, round_no, agent_type, question_text, audio_path, transcript),
+            (
+                session_id,
+                round_no,
+                agent_type,
+                question_text,
+                audio_path,
+                transcript,
+                json.dumps(answer_quality, ensure_ascii=False) if answer_quality else None,
+            ),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -244,12 +258,24 @@ def get_turns(session_id: int) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT round_no, agent_type, question_text, transcript
+            SELECT round_no, agent_type, question_text, transcript, answer_quality_json
             FROM interview_turns
             WHERE session_id = ?
             ORDER BY round_no, id
             """,
             (session_id,),
         ).fetchall()
-    return [dict(row) for row in rows]
+    parsed_rows: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        raw_quality = item.pop("answer_quality_json", None)
+        if raw_quality:
+            try:
+                item["answer_quality"] = json.loads(raw_quality)
+            except Exception:
+                item["answer_quality"] = None
+        else:
+            item["answer_quality"] = None
+        parsed_rows.append(item)
+    return parsed_rows
 

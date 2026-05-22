@@ -1,16 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, RotateCcw, Square, Sparkles, Clock, Volume2 } from "lucide-react";
+import { Mic, MicOff, RotateCcw, Square, Sparkles, Clock, Volume2, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { interviewers, mockQuestions, mockTranscripts, systemMessages, type Interviewer } from "@/lib/interview-mock";
+import { API_BASE, createAudioTurn, createFirstTurn } from "@/lib/api";
+import { interviewers, systemMessages, type Interviewer, type InterviewerType } from "@/lib/interview-mock";
 
 interface Props {
   company: string;
   role: string;
+  sessionId: string;
   onEnd: () => void;
 }
 
 const TOTAL_QUESTIONS = 6;
+const AGENT_TO_INTERVIEWER: Record<string, InterviewerType> = {
+  resume: "document",
+  trend: "news",
+  stress: "followup",
+  judge: "fit",
+};
+const AGENT_TYPE_LABEL: Record<string, string> = {
+  resume: "서류 기반",
+  trend: "뉴스 기반",
+  stress: "꼬리질문",
+  judge: "종합 평가",
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: { transcript: string };
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+type BrowserWithSpeech = Window & {
+  SpeechRecognition?: SpeechRecognitionCtor;
+  webkitSpeechRecognition?: SpeechRecognitionCtor;
+};
 
 function formatTime(s: number) {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -96,19 +137,34 @@ function InterviewerPanel({
   );
 }
 
-export function InterviewScreen({ company, role, onEnd }: Props) {
-  const [qIndex, setQIndex] = useState(0);
+export function InterviewScreen({ company, role, sessionId, onEnd }: Props) {
+  const [roundNo, setRoundNo] = useState(0);
   const [elapsed, setElapsed] = useState(0);
-  const [isSpeaking, setIsSpeaking] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isBooting, setIsBooting] = useState(true);
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [currentAgentType, setCurrentAgentType] = useState("resume");
+  const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
+  const [lastTtsAudioUrl, setLastTtsAudioUrl] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
   const [systemMsg, setSystemMsg] = useState(systemMessages[0]);
-  const transcriptIdx = useRef(0);
+  const [error, setError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechFinalRef = useRef("");
+  const canUseSpeechRef = useRef(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [speechSupported, setSpeechSupported] = useState(false);
 
-  const question = mockQuestions[qIndex % mockQuestions.length];
+  const currentInterviewerId = AGENT_TO_INTERVIEWER[currentAgentType] ?? "document";
   const currentInterviewer = useMemo(
-    () => interviewers.find((i) => i.id === question.interviewer)!,
-    [question.interviewer]
+    () => interviewers.find((i) => i.id === currentInterviewerId)!,
+    [currentInterviewerId]
   );
 
   useEffect(() => {
@@ -117,43 +173,250 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
   }, []);
 
   useEffect(() => {
-    setIsSpeaking(true);
-    setTranscript("");
-    setSystemMsg(systemMessages[qIndex % systemMessages.length]);
-    const t = setTimeout(() => setIsSpeaking(false), 1800);
-    return () => clearTimeout(t);
-  }, [qIndex]);
-
-  useEffect(() => {
-    if (!isRecording) return;
-    const text = mockTranscripts[transcriptIdx.current % mockTranscripts.length];
-    let i = 0;
-    const interval = setInterval(() => {
-      i += 2;
-      setTranscript(text.slice(0, i));
-      if (i >= text.length) clearInterval(interval);
-    }, 40);
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
-  const toggleRecord = () => {
-    if (isSpeaking) return;
-    setIsRecording((r) => !r);
-  };
-
-  const submitAnswer = () => {
-    setIsRecording(false);
-    transcriptIdx.current += 1;
-    if (qIndex + 1 >= TOTAL_QUESTIONS) {
-      onEnd();
+    const browser = window as BrowserWithSpeech;
+    const Ctor = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+    if (!Ctor) {
+      setSpeechSupported(false);
       return;
     }
-    setQIndex((i) => i + 1);
+    setSpeechSupported(true);
+    canUseSpeechRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+
+    const boot = async () => {
+      setIsBooting(true);
+      setError(null);
+      setSystemMsg("면접 첫 질문을 준비 중입니다");
+      try {
+        const first = await createFirstTurn(sessionId);
+        if (cancelled) return;
+        setCurrentQuestion(first.question);
+        setCurrentAgentType(first.agent_type);
+        setRoundNo(first.round_no);
+        if (first.tts_audio_url) {
+          await playTts(first.tts_audio_url);
+        }
+      } catch (e) {
+        if (!cancelled) setError("첫 질문을 불러오지 못했습니다.");
+      } finally {
+        if (!cancelled) setIsBooting(false);
+      }
+    };
+
+    void boot();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+        audioRef.current = null;
+      }
+      speechRef.current?.stop();
+    };
+  }, [sessionId]);
+
+  const pickMimeType = () => {
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    for (const mime of candidates) {
+      if (window.MediaRecorder?.isTypeSupported?.(mime)) return mime;
+    }
+    return "";
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      setRecordedAudio(null);
+      setTranscript("");
+      setLiveTranscript("");
+      speechFinalRef.current = "";
+      setError(null);
+
+      const mimeType = pickMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        setRecordedAudio(blob);
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        setSystemMsg("답변이 녹음되었습니다. 답변 완료를 눌러 전송하세요.");
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setSystemMsg("답변을 듣고 있습니다");
+
+      if (canUseSpeechRef.current) {
+        const browser = window as BrowserWithSpeech;
+        const Ctor = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+        if (Ctor) {
+          const speech = new Ctor();
+          speechRef.current = speech;
+          speech.lang = "ko-KR";
+          speech.continuous = true;
+          speech.interimResults = true;
+          speech.onresult = (event: SpeechRecognitionEventLike) => {
+            let finalTextChunk = "";
+            let interimText = "";
+            for (let i = event.resultIndex; i < event.results.length; i += 1) {
+              const result = event.results[i];
+              const text = result?.[0]?.transcript ?? "";
+              if (result?.isFinal) finalTextChunk += text;
+              else interimText += text;
+            }
+            if (finalTextChunk) {
+              speechFinalRef.current = `${speechFinalRef.current} ${finalTextChunk}`.trim();
+            }
+            setLiveTranscript(`${speechFinalRef.current} ${interimText}`.trim());
+          };
+          speech.onerror = () => {
+            setSystemMsg("음성 인식이 불안정합니다. 녹음은 계속됩니다.");
+          };
+          speech.start();
+        }
+      }
+    } catch (e) {
+      setError("마이크 접근에 실패했습니다. 브라우저 권한을 확인해 주세요.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (!recorderRef.current || recorderRef.current.state !== "recording") return;
+    recorderRef.current.stop();
+    speechRef.current?.stop();
+    setIsRecording(false);
+  };
+
+  const toggleRecord = () => {
+    if (isSpeaking || isSubmitting || isBooting) return;
+    if (isRecording) {
+      stopRecording();
+    } else {
+      void startRecording();
+    }
+  };
+
+  const playTts = async (ttsAudioUrl: string) => {
+    // 이전 오디오가 재생 중이면 즉시 중단
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    setIsSpeaking(false);
+
+    const src = `${API_BASE}${ttsAudioUrl}`;
+    setLastTtsAudioUrl(src);
+    setIsSpeaking(true);
+    return new Promise<void>((resolve) => {
+      const audio = new Audio(src);
+      audioRef.current = audio;
+      audio.onended = () => {
+        setIsSpeaking(false);
+        resolve();
+      };
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        resolve();
+      };
+      void audio.play().catch(() => {
+        setIsSpeaking(false);
+        resolve();
+      });
+    });
+  };
+
+  const submitAnswer = async () => {
+    if (isSubmitting || !currentQuestion) return;
+    if (isRecording) {
+      stopRecording();
+      setSystemMsg("녹음을 종료했습니다. 답변 완료를 다시 눌러 전송하세요.");
+      return;
+    }
+    if (!recordedAudio) {
+      setError("먼저 녹음을 완료해 주세요.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setSystemMsg("음성 인식 및 다음 질문 생성 중입니다");
+    setTranscript(liveTranscript.trim());
+
+    const ext = recordedAudio.type.includes("mp4") ? "m4a" : "webm";
+    const formData = new FormData();
+    formData.append("audio_file", recordedAudio, `answer.${ext}`);
+    formData.append("round_no", String(roundNo + 1));
+    formData.append("question_text", currentQuestion);
+    formData.append("agent_type", currentAgentType);
+
+    try {
+      const result = await createAudioTurn(sessionId, formData);
+      if (result.stt_status !== "success") {
+        setError(result.stt_error ?? "음성 인식에 실패했습니다.");
+        setTranscript("");
+        return;
+      }
+
+      setTranscript(result.transcript);
+      setLiveTranscript("");
+      setCurrentQuestion(result.next_question);
+      setCurrentAgentType(result.next_agent_type ?? currentAgentType);
+      setRoundNo((prev) => prev + 1);
+      setRecordedAudio(null);
+      setSystemMsg(systemMessages[(roundNo + 1) % systemMessages.length]);
+
+      if (result.tts_audio_url) {
+        await playTts(result.tts_audio_url);
+      }
+
+      if (roundNo + 1 >= TOTAL_QUESTIONS) {
+        onEnd();
+      }
+    } catch (e) {
+      setError("답변 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const replay = () => {
+    if (!lastTtsAudioUrl || isSpeaking) return;
     setIsSpeaking(true);
-    setTimeout(() => setIsSpeaking(false), 1500);
+    const audio = new Audio(lastTtsAudioUrl);
+    audioRef.current = audio;
+    audio.onended = () => setIsSpeaking(false);
+    audio.onerror = () => setIsSpeaking(false);
+    void audio.play().catch(() => setIsSpeaking(false));
+  };
+
+  const clearAnswer = () => {
+    if (isRecording) {
+      stopRecording();
+    }
+    setTranscript("");
+    setLiveTranscript("");
+    setRecordedAudio(null);
+    setError(null);
+    setSystemMsg("답변을 지웠습니다. 다시 녹음해 주세요.");
   };
 
   return (
@@ -171,7 +434,7 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
-              질문 {qIndex + 1} / {TOTAL_QUESTIONS}
+              질문 {Math.min(roundNo + 1, TOTAL_QUESTIONS)} / {TOTAL_QUESTIONS}
             </span>
             <Badge className="rounded-full bg-success/15 px-2.5 py-1 text-xs text-success hover:bg-success/15 sm:px-3">
               <span className="mr-1 h-1.5 w-1.5 rounded-full bg-success pulse-dot" />
@@ -189,7 +452,7 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
             {systemMsg}
           </div>
           <span className="text-xs text-muted-foreground sm:hidden">
-            {qIndex + 1} / {TOTAL_QUESTIONS}
+            {Math.min(roundNo + 1, TOTAL_QUESTIONS)} / {TOTAL_QUESTIONS}
           </span>
         </div>
 
@@ -206,13 +469,10 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
         </div>
 
         {/* Current question */}
-        <div
-          key={qIndex}
-          className="mt-5 rounded-3xl border border-border bg-card p-5 shadow-card fade-in sm:p-7"
-        >
+        <div className="mt-5 rounded-3xl border border-border bg-card p-5 shadow-card fade-in sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="rounded-full bg-accent text-accent-foreground">
-              {question.type}
+              {AGENT_TYPE_LABEL[currentAgentType] ?? "면접 질문"}
             </Badge>
             <span className="text-sm text-muted-foreground">{currentInterviewer.name}</span>
             {isSpeaking && (
@@ -223,7 +483,7 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
             )}
           </div>
           <p className="mt-3 text-[19px] font-semibold leading-[1.4] tracking-tight text-foreground sm:mt-4 sm:text-[22px]">
-            {question.text}
+            {currentQuestion || "첫 질문을 준비하고 있습니다..."}
           </p>
         </div>
 
@@ -233,7 +493,7 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
           <div className="flex items-center gap-4 border-b border-border bg-surface-muted/60 px-5 py-5 sm:px-7">
             <button
               onClick={toggleRecord}
-              disabled={isSpeaking}
+              disabled={isSpeaking || isSubmitting || isBooting}
               aria-label={isRecording ? "녹음 중지" : "녹음 시작"}
               className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 sm:h-16 sm:w-16 ${
                 isRecording
@@ -251,6 +511,8 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
                   ? "답변을 듣고 있어요"
                   : isSpeaking
                   ? "면접관이 질문 중입니다"
+                  : isSubmitting
+                  ? "답변을 분석하고 있습니다"
                   : "마이크를 눌러 답변을 시작하세요"}
               </p>
               <div className="mt-2 flex h-7 items-center gap-[3px]">
@@ -267,6 +529,8 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
                   ))
                 ) : isSpeaking ? (
                   <span className="text-xs text-muted-foreground">면접관이 다음 질문을 준비하고 있어요.</span>
+                ) : isSubmitting ? (
+                  <span className="text-xs text-muted-foreground">STT/TTS 처리 중입니다...</span>
                 ) : (
                   <span className="text-xs text-muted-foreground">마이크 준비 완료 · STT 자동 변환</span>
                 )}
@@ -294,7 +558,11 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
             <p className="mt-2 min-h-[4.5rem] text-[16px] leading-[1.4] text-foreground">
               {transcript || (
                 <span className="text-muted-foreground">
-                  마이크를 누르면 답변이 텍스트로 기록됩니다.
+                  {liveTranscript
+                    ? liveTranscript
+                    : recordedAudio
+                    ? "답변 준비 완료. '답변 완료'를 눌러 전송하세요."
+                    : "마이크를 누르면 답변이 텍스트로 기록됩니다."}
                 </span>
               )}
               {isRecording && (
@@ -319,14 +587,34 @@ export function InterviewScreen({ company, role, onEnd }: Props) {
                   다시 듣기
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={clearAnswer}
+                  disabled={isSubmitting || (!recordedAudio && !transcript && !liveTranscript && !isRecording)}
+                  className="h-10 rounded-xl"
+                >
+                  <Eraser className="mr-1 h-3.5 w-3.5" />
+                  답변 지우기
+                </Button>
+                <Button
                   onClick={submitAnswer}
-                  disabled={!transcript && !isRecording}
+                  disabled={isSubmitting || !currentQuestion || (!recordedAudio && !isRecording)}
                   className="h-10 rounded-xl px-5 font-semibold"
                 >
-                  답변 완료
+                  {isSubmitting ? "처리 중..." : "답변 완료"}
                 </Button>
               </div>
             </div>
+            {!speechSupported && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                브라우저 실시간 STT를 지원하지 않습니다. 녹음 후 서버 STT 결과가 표시됩니다.
+              </p>
+            )}
+            {error && (
+              <p className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {error}
+              </p>
+            )}
           </div>
         </div>
       </div>

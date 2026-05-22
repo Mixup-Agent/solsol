@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { finalizeInterview } from "@/lib/api";
 
 interface Props {
+  sessionId: string;
   onDone: () => void;
 }
 
@@ -13,8 +15,9 @@ const steps = [
   "개선 포인트 정리",
 ];
 
-export function AnalyzingScreen({ onDone }: Props) {
+export function AnalyzingScreen({ sessionId, onDone }: Props) {
   const [progress, setProgress] = useState(0);
+  const [finalized, setFinalized] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -23,7 +26,17 @@ export function AnalyzingScreen({ onDone }: Props) {
     return () => clearInterval(t);
   }, []);
 
-  const ready = progress >= steps.length;
+  useEffect(() => {
+    if (!sessionId) {
+      setFinalized(true);
+      return;
+    }
+    finalizeInterview(sessionId)
+      .then(() => setFinalized(true))
+      .catch(() => setFinalized(true));
+  }, [sessionId]);
+
+  const ready = progress >= steps.length && finalized;
 
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-12">
