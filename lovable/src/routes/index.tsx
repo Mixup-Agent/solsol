@@ -44,7 +44,7 @@ function Index() {
           onEnd={() => setStage("analyzing")}
         />
       )}
-      {stage === "analyzing" && <AnalyzingScreen onDone={() => setStage("report")} />}
+      {stage === "analyzing" && <AnalyzingScreen sessionId={meta.sessionId} onDone={() => setStage("report")} />}
       {stage === "report" && (
         <ReportScreen
           company={meta.company}

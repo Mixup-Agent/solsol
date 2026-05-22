@@ -126,23 +126,70 @@ async def submit_answer(session_id: str, body: AnswerRequest):
 
 @router.post("/session/{session_id}/finalize")
 async def finalize_interview(session_id: str):
-    """면접을 조기 종료할 때 judge 에이전트를 즉시 실행해 리포트를 생성한다."""
-    session = await get_session(session_id)
-    if not session:
-        raise HTTPException(404, "세션을 찾을 수 없습니다")
-    if session.get("status") == "done":
-        return {"status": "already_done"}
-
+    """면접을 종료할 때 judge 에이전트를 실행해 리포트를 생성한다.
+    Redis(텍스트 플로우)와 SQLite(오디오 플로우) 둘 다 지원한다.
+    """
     from app.agents.judge import judge_agent
 
-    state: InterviewState = session.get("interview_state", {})
+    session = await get_session(session_id)
+    if session and session.get("status") == "done":
+        return {"status": "already_done"}
+
+    state: InterviewState | None = None
+
+    # Redis 플로우: interview_state가 이미 있는 경우
+    if session and session.get("interview_state"):
+        state = session["interview_state"]
+    else:
+        # SQLite 플로우: 오디오 턴 기반 세션
+        try:
+            int_id = int(session_id)
+            from app.services.interview_db import get_agent_context, get_turns
+
+            turns = get_turns(int_id)
+            record = get_agent_context(int_id)
+            if record:
+                ctx = record[1]
+                docs = ctx.get("candidate_documents", {})
+
+                messages: list[dict] = []
+                for t in turns:
+                    if t.get("question_text"):
+                        messages.append({"role": "interviewer", "content": t["question_text"]})
+                    if t.get("transcript"):
+                        messages.append({"role": "candidate", "content": t["transcript"]})
+
+                state = {
+                    "session_id": session_id,
+                    "cover_letter": _strip_html((docs.get("self_intro") or {}).get("text", "")),
+                    "resume_text": _strip_html((docs.get("resume") or {}).get("text", "")),
+                    "portfolio_text": _strip_html((docs.get("portfolio") or {}).get("text", "")) or None,
+                    "company": ctx.get("company", ""),
+                    "role": ctx.get("role", ""),
+                    "job_posting_text": (ctx.get("job_posting") or {}).get("text") or None,
+                    "round": len(turns),
+                    "max_rounds": 99,
+                    "messages": messages,
+                    "agent_history": [t["agent_type"] for t in turns if t.get("agent_type")],
+                    "meta_decisions": [],
+                    "current_agent": None,
+                    "current_question": None,
+                    "last_answer": turns[-1]["transcript"] if turns else None,
+                    "is_done": False,
+                    "scores": {},
+                    "feedback": None,
+                }
+        except (ValueError, TypeError):
+            pass
+
     if not state:
-        raise HTTPException(400, "진행 중인 면접 상태가 없습니다")
+        raise HTTPException(404, "세션 상태를 찾을 수 없습니다")
 
     result = await judge_agent(state)
-    session["interview_state"] = result
-    session["status"] = "done"
-    await update_session(session_id, session)
+    new_session = session or {}
+    new_session["interview_state"] = result
+    new_session["status"] = "done"
+    await update_session(session_id, new_session)
 
     return {"status": "done"}
 

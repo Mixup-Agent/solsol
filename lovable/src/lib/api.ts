@@ -50,7 +50,7 @@ export async function submitAnswer(sessionId: string, answer: string) {
 }
 
 export async function finalizeInterview(sessionId: string) {
-  const res = await fetch(`${BASE}/api/v1/session/${sessionId}/finalize`, {
+  const res = await fetch(`${API_BASE}/api/v1/session/${sessionId}/finalize`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(await res.text());
