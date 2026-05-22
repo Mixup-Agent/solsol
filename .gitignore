@@ -28,6 +28,10 @@ pnpm-debug.log*
 *.sqlite3
 *.db
 
+# Uploaded user files (PDFs, audio)
+backend/app/uploads/
+backend/app/data/
+
 # IDE / OS
 .vscode/
 .idea/

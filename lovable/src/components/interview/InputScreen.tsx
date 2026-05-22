@@ -1,13 +1,13 @@
-import { useState } from "react";
-import { Check, FileUp, Upload, ChevronRight, ArrowLeft } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, FileUp, Upload, ChevronRight, ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { createSession } from "@/lib/api";
 
 interface Props {
   onBack: () => void;
-  onStart: (data: { company: string; role: string }) => void;
+  onStart: (data: { company: string; role: string; sessionId: string }) => void;
 }
 
 const steps = [
@@ -16,33 +16,47 @@ const steps = [
   { id: 3, title: "채용공고", desc: "공고 링크" },
 ];
 
-function MockUpload({ label, filename }: { label: string; filename?: string }) {
-  const [done, setDone] = useState(!!filename);
-  const [name, setName] = useState(filename ?? "");
-
-  const handleClick = () => {
-    setName("portfolio_2025.pdf");
-    setDone(true);
-  };
+function FileUpload({
+  label,
+  required,
+  file,
+  onChange,
+}: {
+  label: string;
+  required?: boolean;
+  file: File | null;
+  onChange: (f: File | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={() => inputRef.current?.click()}
       className="group flex w-full items-center justify-between rounded-2xl border border-dashed border-border bg-surface-muted px-5 py-4 text-left transition hover:border-primary/50 hover:bg-accent/40"
     >
       <div className="flex items-center gap-3">
-        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${done ? "bg-success/15 text-success" : "bg-surface text-muted-foreground"}`}>
-          {done ? <Check className="h-5 w-5" /> : <FileUp className="h-5 w-5" />}
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${file ? "bg-success/15 text-success" : "bg-surface text-muted-foreground"}`}>
+          {file ? <Check className="h-5 w-5" /> : <FileUp className="h-5 w-5" />}
         </div>
         <div>
-          <p className="text-[15px] font-medium text-foreground">{label}</p>
+          <p className="text-[15px] font-medium text-foreground">
+            {label}
+            {required && <span className="ml-1 text-destructive">*</span>}
+          </p>
           <p className="text-sm text-muted-foreground">
-            {done ? `${name} · 1.4MB` : "PDF 파일을 드래그하거나 클릭하여 업로드"}
+            {file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)}MB` : "PDF 파일을 클릭하여 업로드"}
           </p>
         </div>
       </div>
       <Upload className="h-4 w-4 text-muted-foreground" />
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+      />
     </button>
   );
 }
@@ -51,7 +65,36 @@ export function InputScreen({ onBack, onStart }: Props) {
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [link, setLink] = useState("");
-  const [coverLetter, setCoverLetter] = useState("");
+  const [selfIntroFile, setSelfIntroFile] = useState<File | null>(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [portfolioFile, setPortfolioFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit = company && role && link && selfIntroFile && resumeFile && portfolioFile;
+
+  const handleStart = async () => {
+    if (!canSubmit) return;
+    setLoading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append("self_intro_file", selfIntroFile!);
+    formData.append("resume_file", resumeFile!);
+    formData.append("portfolio_file", portfolioFile!);
+    formData.append("company", company);
+    formData.append("role", role);
+    formData.append("job_posting_url", link);
+
+    try {
+      const session = await createSession(formData);
+      onStart({ company, role, sessionId: String(session.session_id) });
+    } catch (e) {
+      setError("세션 생성에 실패했습니다. 서버 연결을 확인해 주세요.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -92,15 +135,15 @@ export function InputScreen({ onBack, onStart }: Props) {
             <p className="mt-1 text-sm text-muted-foreground">지원 정보를 바탕으로 맞춤형 면접 질문을 생성합니다.</p>
             <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="company">회사명</Label>
+                <Label htmlFor="company">회사명 <span className="text-destructive">*</span></Label>
                 <Input id="company" placeholder="예: 토스" value={company} onChange={(e) => setCompany(e.target.value)} className="h-11 rounded-xl" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="role">지원 직무</Label>
+                <Label htmlFor="role">지원 직무 <span className="text-destructive">*</span></Label>
                 <Input id="role" placeholder="예: 프로덕트 디자이너" value={role} onChange={(e) => setRole(e.target.value)} className="h-11 rounded-xl" />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="link">채용공고 링크</Label>
+                <Label htmlFor="link">채용공고 링크 <span className="text-destructive">*</span></Label>
                 <Input id="link" placeholder="https://" value={link} onChange={(e) => setLink(e.target.value)} className="h-11 rounded-xl" />
               </div>
             </div>
@@ -110,24 +153,37 @@ export function InputScreen({ onBack, onStart }: Props) {
             <h2 className="text-xl font-semibold text-foreground">서류 업로드</h2>
             <p className="mt-1 text-sm text-muted-foreground">자소서, 이력서, 포트폴리오를 업로드하면 더 정교한 질문이 생성됩니다.</p>
             <div className="mt-6 space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="cover">자기소개서</Label>
-                <Textarea id="cover" rows={5} placeholder="자기소개서 내용을 붙여넣어 주세요." value={coverLetter} onChange={(e) => setCoverLetter(e.target.value)} className="rounded-2xl" />
-              </div>
-              <MockUpload label="이력서 PDF" filename="resume.pdf" />
-              <MockUpload label="포트폴리오 PDF" />
+              <FileUpload label="자기소개서 PDF" required file={selfIntroFile} onChange={setSelfIntroFile} />
+              <FileUpload label="이력서 PDF" required file={resumeFile} onChange={setResumeFile} />
+              <FileUpload label="포트폴리오 PDF" required file={portfolioFile} onChange={setPortfolioFile} />
             </div>
           </section>
+
+          {error && (
+            <p className="rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-3 text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
           <div className="flex items-center justify-between rounded-2xl border border-border bg-surface px-5 py-4 shadow-soft">
             <p className="text-sm text-muted-foreground">입력하신 정보는 면접 종료 후 삭제됩니다.</p>
             <Button
               size="lg"
-              onClick={() => onStart({ company: company || "토스", role: role || "프로덕트 디자이너" })}
+              onClick={handleStart}
+              disabled={!canSubmit || loading}
               className="h-12 rounded-2xl px-6 text-[15px] font-semibold"
             >
-              면접 시작
-              <ChevronRight className="ml-0.5 h-4 w-4" />
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  분석 중...
+                </>
+              ) : (
+                <>
+                  면접 시작
+                  <ChevronRight className="ml-0.5 h-4 w-4" />
+                </>
+              )}
             </Button>
           </div>
         </main>

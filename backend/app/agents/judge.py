@@ -1,10 +1,10 @@
 import json
 
 from app.agents.state import InterviewState
-from langchain_anthropic import ChatAnthropic
+from langchain_upstage import ChatUpstage
 from app.config import settings
 
-llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key)
+llm = ChatUpstage(model="solar-pro", api_key=settings.upstage_api_key)
 
 
 async def judge_agent(state: InterviewState) -> InterviewState:
