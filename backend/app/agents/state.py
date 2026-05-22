@@ -16,6 +16,7 @@ class InterviewState(TypedDict):
     max_rounds: int                   # 최대 라운드 수 (기본 8)
     messages: list[dict]              # 대화 히스토리 {"role": "interviewer"|"candidate", "content": "..."}
     agent_history: list[str]          # 호출된 에이전트 순서 ["resume", "trend", ...]
+    meta_decisions: list[dict]        # meta 라우팅 기록 [{"round","agent","reason"}, ...]
 
     # 현재 턴 데이터
     current_agent: Optional[str]      # "resume" | "trend" | "stress" | "judge"

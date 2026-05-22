@@ -64,6 +64,7 @@ async def main() -> None:
         "is_done": False,
         "scores": {},
         "feedback": None,
+        "meta_decisions": [],
     }
 
     _divider(f"면접 시작 — {SAMPLE_COMPANY} / {SAMPLE_ROLE}")
@@ -91,6 +92,9 @@ async def main() -> None:
           f"논리 {s.get('logic')}  경험 {s.get('experience')}  트렌드 {s.get('trend')}")
     print(f"\n[피드백]\n{state['feedback']}")
     print(f"\n에이전트 호출 순서: {' → '.join(state['agent_history'])} → judge")
+    print("\n[meta 라우팅 결정 — 왜 그 면접관을 골랐나]")
+    for d in state.get("meta_decisions", []):
+        print(f"  R{d['round']} → {d['agent']}: {d['reason']}")
 
 
 if __name__ == "__main__":
