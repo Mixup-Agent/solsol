@@ -29,7 +29,17 @@ async def trend_agent(state: InterviewState) -> InterviewState:
         limit=5,
     )
     news_block = news_context or "(연결된 네이버 뉴스 데이터 없음)"
-    user_prompt = (
+    style = state.get("company_style") or {}
+    style_hint = (
+        f"[회사 면접 스타일 가이드]\n"
+        f"- 회사: {state['company']}\n"
+        f"- 격식: {style.get('formality', 'neutral')}\n"
+        f"- 중점 평가: {', '.join(style.get('focus_areas', [])) or '미정'}\n"
+        f"- 질문 톤: {style.get('question_style', '구체적 경험 기반')}\n"
+        f"- 알려진 면접 관행: {', '.join(style.get('known_interview_practices', [])) or '없음'}\n"
+        f"위 스타일에 맞는 질문을 생성하세요.\n\n"
+    )
+    user_prompt = style_hint + (
         f"직무: {state['role']}\n"
         f"회사: {state['company']}\n"
         f"[채용공고 발췌]\n{job_posting}\n\n"

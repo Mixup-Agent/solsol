@@ -76,6 +76,7 @@ def _build_state(session_id: int, turns: list[dict]) -> InterviewState:
         "company": ctx.get("company", ""),
         "role": ctx.get("role", ""),
         "job_posting_text": (ctx.get("job_posting") or {}).get("text"),
+        "company_style": {},
         "round": len(turns),
         "max_rounds": _VOICE_MAX_ROUNDS,
         "messages": messages,

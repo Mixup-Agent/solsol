@@ -66,7 +66,17 @@ async def stress_agent(state: InterviewState) -> InterviewState:
         f"flags={','.join(quality.get('flags', [])) or 'none'}, "
         f"feedback={quality.get('feedback', '')}"
     )
-    user_prompt = (
+    style = state.get("company_style") or {}
+    style_hint = (
+        f"[회사 면접 스타일 가이드]\n"
+        f"- 회사: {state['company']}\n"
+        f"- 격식: {style.get('formality', 'neutral')}\n"
+        f"- 중점 평가: {', '.join(style.get('focus_areas', [])) or '미정'}\n"
+        f"- 질문 톤: {style.get('question_style', '구체적 경험 기반')}\n"
+        f"- 알려진 면접 관행: {', '.join(style.get('known_interview_practices', [])) or '없음'}\n"
+        f"위 스타일에 맞는 질문을 생성하세요.\n\n"
+    )
+    user_prompt = style_hint + (
         f"[직전 면접관 질문]\n{last_question or '(없음)'}\n\n"
         f"[지원자의 직전 답변]\n{last_answer}\n\n"
         f"[답변 품질 진단]\n{quality_brief}\n\n"

@@ -23,6 +23,41 @@ class RouteDecision(BaseModel):
     reason: str = Field(description="이 면접관을 고른 한 줄 이유")
 
 
+class CompanyStyle(BaseModel):
+    """면접 시작 시 1회 결정되는 회사별 면접 스타일 프로파일."""
+
+    formality: Literal["casual", "neutral", "formal"] = Field(
+        description="면접 격식 수준. casual=스타트업/IT 자율, neutral=중간, formal=대기업/금융 격식"
+    )
+    pressure_max: int = Field(
+        ge=1,
+        le=5,
+        description="이 회사가 허용하는 압박 강도 상한 (1=부드러움, 5=고압박)",
+    )
+    focus_areas: list[str] = Field(description="이 회사가 중점적으로 보는 역량 3~5개")
+    question_style: str = Field(description="질문 톤 한 줄 가이드")
+    known_interview_practices: list[str] = Field(
+        description="알려진 그 회사의 실제 면접 관행 3~5개 (예: '임팩트 중심 PT', '1:1 심층 인터뷰'). 모르면 빈 리스트."
+    )
+    signature_questions: list[str] = Field(
+        description="그 회사 면접에서 자주 나오는 대표 질문 패턴 3~5개. 모르면 빈 리스트."
+    )
+    company_summary: str = Field(description="회사 인재상·문화 2~3문장 요약")
+
+
+_STYLE_SYSTEM_PROMPT = """당신은 한국 기업의 실제 면접 문화를 잘 아는 전문가입니다.
+회사명과 채용공고를 보고, 그 회사의 실제 면접에서 자주 나오는 질문 유형과
+면접 진행 방식을 떠올려 면접 스타일 프로파일을 작성합니다.
+
+근거 우선순위:
+1. 알고 있는 그 회사의 실제 면접 후기·관행 (잡플래닛/블라인드 등에서 알려진 내용)
+2. 채용공고에 드러난 톤과 강조 가치
+3. 동종 업계·동급 회사들의 일반적 면접 패턴
+
+모르는 회사면 channel 2~3으로 추론하고, 알고 있는 회사면 구체적 관행을 반영합니다.
+known_interview_practices와 signature_questions는 근거가 부족하면 빈 리스트를 반환하세요."""
+
+
 SYSTEM_PROMPT = """당신은 면접 진행을 총괄하는 오케스트레이터입니다.
 다음에 어떤 면접관에게 질문을 넘길지 결정하세요.
 
@@ -47,6 +82,35 @@ def _record(state: InterviewState, agent: str, reason: str) -> list[dict]:
     return state.get("meta_decisions", []) + [
         {"round": state["round"], "agent": agent, "reason": reason}
     ]
+
+
+async def _decide_company_style(state: InterviewState) -> dict:
+    """면접 시작 시 회사 스타일 프로파일을 결정한다. 1회 호출."""
+    llm = with_session_cache(solar, state["session_id"])
+    style_llm = llm.with_structured_output(CompanyStyle)
+
+    user_prompt = (
+        f"회사: {state['company']}\n"
+        f"직무: {state['role']}\n"
+        f"[채용공고]\n{state.get('job_posting_text') or '(채용공고 정보 없음)'}\n\n"
+        f"이 회사의 면접 스타일 프로파일을 작성하세요."
+    )
+    try:
+        result: CompanyStyle = await style_llm.ainvoke(
+            [("system", _STYLE_SYSTEM_PROMPT), ("human", user_prompt)]
+        )
+        return result.model_dump()
+    except Exception:
+        logger.exception("회사 스타일 결정 실패 — 중립 프로파일 폴백")
+        return {
+            "formality": "neutral",
+            "pressure_max": 3,
+            "focus_areas": ["문제 해결력", "협업", "직무 적합성"],
+            "question_style": "구체적 경험을 묻는 질문 위주",
+            "known_interview_practices": [],
+            "signature_questions": [],
+            "company_summary": f"{state.get('company', '')}의 {state.get('role', '')} 포지션",
+        }
 
 
 def _quality_gate(state: InterviewState) -> tuple[bool, str]:
@@ -115,10 +179,16 @@ async def meta_agent(state: InterviewState) -> InterviewState:
         }
 
     if state["round"] == 0 or not state["messages"]:
+        company_style = await _decide_company_style(state)
         return {
             **state,
+            "company_style": company_style,
             "current_agent": "resume",
-            "meta_decisions": _record(state, "resume", "면접 시작 — 이력서 기반 오프닝"),
+            "meta_decisions": _record(
+                state,
+                "resume",
+                f"면접 시작 — 회사 스타일({company_style.get('formality')}) 결정 후 이력서 기반 오프닝",
+            ),
         }
 
     force_stress, force_reason = _quality_gate(state)
@@ -131,9 +201,18 @@ async def meta_agent(state: InterviewState) -> InterviewState:
 
     history = state["agent_history"]
     try:
+        style = state.get("company_style") or {}
+        style_context = (
+            f"\n[회사 면접 스타일]\n"
+            f"- 격식: {style.get('formality', 'neutral')}\n"
+            f"- 압박 상한: {style.get('pressure_max', 3)}/5\n"
+            f"- 중점 평가 역량: {', '.join(style.get('focus_areas', [])) or '미정'}\n"
+            f"이 스타일에 맞춰 다음 면접관을 선택합니다.\n"
+        )
         user_prompt = (
             f"지금까지 호출된 면접관 순서: {history}\n"
-            f"지원자의 직전 답변: {state.get('last_answer') or '(없음)'}\n\n"
+            f"지원자의 직전 답변: {state.get('last_answer') or '(없음)'}\n"
+            f"{style_context}\n"
             f"[면접 대화]\n{format_transcript(state['messages'])}\n\n"
             f"다음 면접관을 선택하세요."
         )

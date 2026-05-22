@@ -10,6 +10,7 @@ class InterviewState(TypedDict):
     company: str
     role: str
     job_posting_text: Optional[str]
+    company_style: dict               # meta가 첫 진입 시 결정한 회사별 면접 스타일 프로파일
 
     # 면접 진행 상태
     round: int                        # 현재 라운드 (0부터 시작)
