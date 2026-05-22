@@ -1,20 +1,14 @@
-# Web framework
 fastapi
 uvicorn[standard]
 python-multipart
-
-# Config
-python-dotenv
-pydantic
-pydantic-settings
-
-# HTTP / API
-requests
+pdfplumber
 httpx
-
-# Multi-agent orchestration
+beautifulsoup4
+redis[asyncio]
+pydantic[email]
+pydantic-settings
+python-dotenv
 langchain
 langgraph
-
-# Data
+langchain-anthropic
 pandas
