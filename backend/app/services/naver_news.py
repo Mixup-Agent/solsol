@@ -49,16 +49,47 @@ def build_trend_news_context(
     limit: int = 5,
 ) -> str:
     """role/company/job posting 기준으로 뉴스를 찾아 LLM 프롬프트 텍스트를 구성한다."""
-    if limit <= 0:
+    rows = load_trend_news_sources(
+        role=role,
+        company=company,
+        job_posting_text=job_posting_text,
+        limit=limit,
+    )
+    if not rows:
         return ""
+
+    lines = ["[네이버 뉴스 참고]"]
+    for idx, row in enumerate(rows, start=1):
+        article = (row.get("article_content") or "").strip()
+        excerpt = article[:220].replace("\n", " ")
+        lines.append(
+            f"{idx}. [{row['query']}] {row['title']} | {row['published_at']} | {row['url']}"
+        )
+        if row.get("summary"):
+            lines.append(f"   - 요약: {row['summary']}")
+        if excerpt:
+            lines.append(f"   - 본문 발췌: {excerpt}")
+
+    return "\n".join(lines)
+
+
+def load_trend_news_sources(
+    role: str,
+    company: str,
+    job_posting_text: str | None,
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    """trend 질문 생성에 사용한 뉴스 원문 메타데이터를 반환한다."""
+    if limit <= 0:
+        return []
 
     db_path = _DEFAULT_DB_PATH
     if not db_path.exists():
-        return ""
+        return []
 
     keywords = _extract_keywords(role=role, company=company, job_posting_text=job_posting_text)
     if not keywords:
-        return ""
+        return []
 
     try:
         conn = sqlite3.connect(db_path)
@@ -84,21 +115,20 @@ def build_trend_news_context(
         finally:
             conn.close()
     except Exception:
-        return ""
+        return []
 
     if not rows:
-        return ""
+        return []
 
-    lines = ["[네이버 뉴스 참고]"]
-    for idx, row in enumerate(rows, start=1):
-        article = (row["article_content"] or "").strip()
-        excerpt = article[:220].replace("\n", " ")
-        lines.append(
-            f"{idx}. [{row['query']}] {row['title']} | {row['published_at']} | {row['url']}"
-        )
-        if row["summary"]:
-            lines.append(f"   - 요약: {row['summary']}")
-        if excerpt:
-            lines.append(f"   - 본문 발췌: {excerpt}")
-
-    return "\n".join(lines)
+    return [
+        {
+            "source": "네이버 뉴스",
+            "query": row["query"] or "",
+            "title": row["title"] or "",
+            "url": row["url"] or "",
+            "published_at": row["published_at"] or "",
+            "summary": row["summary"] or "",
+            "article_content": row["article_content"] or "",
+        }
+        for row in rows
+    ]

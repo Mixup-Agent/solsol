@@ -26,6 +26,7 @@ def _build_state_from_context(session_id: str, context: dict) -> InterviewState:
         "company": context.get("company", ""),
         "role": context.get("role", ""),
         "job_posting_text": context.get("job_posting", {}).get("text", "") or None,
+        "company_style": {},
         "round": 0,
         "max_rounds": 8,
         "messages": [],
@@ -34,6 +35,7 @@ def _build_state_from_context(session_id: str, context: dict) -> InterviewState:
         "answer_quality_history": [],
         "current_agent": None,
         "current_question": None,
+        "current_question_sources": [],
         "last_answer": None,
         "last_answer_quality": None,
         "is_done": False,
@@ -70,6 +72,7 @@ async def start_interview(session_id: str):
             "company": session["parsed"]["company"],
             "role": session["parsed"]["role"],
             "job_posting_text": session["parsed"].get("job_posting_text"),
+            "company_style": {},
             "round": 0,
             "max_rounds": 8,
             "messages": [],
@@ -78,6 +81,7 @@ async def start_interview(session_id: str):
             "answer_quality_history": [],
             "current_agent": None,
             "current_question": None,
+            "current_question_sources": [],
             "last_answer": None,
             "last_answer_quality": None,
             "is_done": False,
@@ -120,6 +124,7 @@ async def submit_answer(session_id: str, body: AnswerRequest):
         question_text=latest_question,
         answer_text=body.answer,
         recent_answers=recent_answers,
+        session_id=state["session_id"],
     )
     state["last_answer_quality"] = quality
     state.setdefault("answer_quality_history", []).append(
@@ -193,6 +198,7 @@ async def finalize_interview(session_id: str):
                     "company": ctx.get("company", ""),
                     "role": ctx.get("role", ""),
                     "job_posting_text": (ctx.get("job_posting") or {}).get("text") or None,
+                    "company_style": {},
                     "round": len(turns),
                     "max_rounds": 99,
                     "messages": messages,
@@ -211,6 +217,7 @@ async def finalize_interview(session_id: str):
                     ],
                     "current_agent": None,
                     "current_question": None,
+                    "current_question_sources": [],
                     "last_answer": turns[-1]["transcript"] if turns else None,
                     "last_answer_quality": (
                         (turns[-1].get("answer_quality") if turns else None) or None

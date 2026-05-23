@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.llm import solar
+from app.agents.llm import solar_classifier as solar, with_session_cache
 
 
 class AnswerQualityResult(BaseModel):
@@ -29,9 +29,6 @@ class AnswerQualityResult(BaseModel):
     action_hint: Literal["normal", "followup", "stress"] = Field(
         description="다음 라우팅 힌트"
     )
-
-
-_quality_llm = solar.with_structured_output(AnswerQualityResult)
 
 
 SYSTEM_PROMPT = """당신은 면접 답변 품질 평가기입니다.
@@ -60,6 +57,7 @@ async def evaluate_answer_quality(
     question_text: str,
     answer_text: str,
     recent_answers: list[str] | None = None,
+    session_id: str = "",
 ) -> dict:
     """질문/답변 품질을 LLM으로 진단한다."""
     recent_answers = recent_answers or []
@@ -71,7 +69,9 @@ async def evaluate_answer_quality(
     )
 
     try:
-        result: AnswerQualityResult = await _quality_llm.ainvoke(
+        llm = with_session_cache(solar, session_id)
+        quality_llm = llm.with_structured_output(AnswerQualityResult)
+        result: AnswerQualityResult = await quality_llm.ainvoke(
             [("system", SYSTEM_PROMPT), ("human", user_prompt)]
         )
         return result.model_dump()

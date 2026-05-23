@@ -4,7 +4,7 @@ import logging
 from pydantic import BaseModel, Field
 
 from app.agents.helpers import format_transcript
-from app.agents.llm import solar
+from app.agents.llm import solar_reasoner as solar, with_session_cache
 from app.agents.state import InterviewState
 
 logger = logging.getLogger(__name__)
@@ -19,9 +19,6 @@ class JudgeResult(BaseModel):
     trend: int = Field(ge=0, le=100, description="트렌드 점수 (0-100)")
     feedback: str = Field(description="지원자에게 전하는 3~5문장 종합 피드백")
 
-
-# 구조화 출력 — Solar가 JudgeResult 스키마를 강제로 따르므로 수동 JSON 파싱 불필요
-structured_llm = solar.with_structured_output(JudgeResult)
 
 SYSTEM_PROMPT = """당신은 면접 평가 전문가입니다. 면접 전체 대화를 읽고 지원자를 평가하세요.
 
@@ -49,6 +46,8 @@ async def judge_agent(state: InterviewState) -> InterviewState:
     )
 
     try:
+        llm = with_session_cache(solar, state["session_id"])
+        structured_llm = llm.with_structured_output(JudgeResult)
         result: JudgeResult = await structured_llm.ainvoke(
             [("system", SYSTEM_PROMPT), ("human", user_prompt)]
         )

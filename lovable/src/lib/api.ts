@@ -1,5 +1,12 @@
-export const API_BASE =
-  (import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000";
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000";
+
+export type QuestionSource = {
+  source: string;
+  query?: string;
+  title: string;
+  url: string;
+  published_at?: string;
+};
 
 export async function createSession(formData: FormData) {
   const res = await fetch(`${API_BASE}/api/v1/interview-sessions`, {
@@ -78,6 +85,7 @@ export async function createFirstTurn(sessionId: string) {
     round_no: number;
     question: string;
     agent_type: "resume" | "trend" | "stress" | "judge";
+    question_sources?: QuestionSource[];
     tts_audio_url: string | null;
     tts_provider?: string;
     tts_status: "success" | "failed";
@@ -98,6 +106,7 @@ export async function createAudioTurn(sessionId: string, formData: FormData) {
     stt_provider?: string;
     next_question: string;
     next_agent_type: "resume" | "trend" | "stress" | "judge";
+    next_question_sources?: QuestionSource[];
     evaluation: unknown;
     tts_audio_url: string | null;
     tts_provider?: string;
